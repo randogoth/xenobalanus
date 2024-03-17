@@ -2,6 +2,7 @@ use geo::{Point, Polygon, LineString, EuclideanDistance, Area};
 use std::collections::{HashMap, HashSet};
 use std::cmp::{min, max};
 use rand::Rng;
+use rayon::prelude::*;
 use delaunator::{triangulate, Point as DelaunatorPoint};
 
 pub fn random_points(center: (f32, f32), radius: f32, num_points: usize) -> Vec<Point<f32>> {
@@ -23,7 +24,7 @@ pub fn random_points(center: (f32, f32), radius: f32, num_points: usize) -> Vec<
     points
 }
 
-pub fn delaunay(points: Vec<Point<f32>>) -> Vec<usize> {
+pub fn delaunay(points: &Vec<Point<f32>>) -> Vec<usize> {
     // Convert geo::Point<f32> to delaunator::Point for triangulation
     let delaunator_points: Vec<DelaunatorPoint> = points.iter()
         .map(|point: &Point<f32>| DelaunatorPoint { x: point.x() as f64, y: point.y() as f64 })
@@ -36,55 +37,80 @@ pub fn delaunay(points: Vec<Point<f32>>) -> Vec<usize> {
     result.triangles
 }
 
-fn preprocess(dots: Vec<(f32, f32)>, triangles: Vec<usize>) -> (Vec<Point<f32>>, HashMap<usize, HashSet<usize>>, HashMap<usize, f32>, HashMap<(usize, usize), HashSet<usize>>, HashMap<(usize, usize), f32>, HashMap<usize, HashSet<usize>>) {
-    let points: Vec<Point<f32>> = dots.into_iter().map(|(x, y)| Point::new(x, y)).collect();
+fn preprocess(points: &[Point<f32>], triangles: &[usize]) -> (
+    HashMap<usize, HashSet<usize>>,
+    HashMap<usize, f32>,
+    HashMap<(usize, usize), HashSet<usize>>,
+    HashMap<(usize, usize), f32>,
+    HashMap<usize, HashSet<usize>>,
+) {
+    // Process each set of triangle indices in parallel
+    let triangle_calculation: Vec<_> = triangles.par_chunks(3).map(|tri_idx| {
+        let point_a: Point<f32> = points[tri_idx[0]];
+        let point_b: Point<f32> = points[tri_idx[1]];
+        let point_c: Point<f32> = points[tri_idx[2]];
 
-    let mut wing_map: HashMap<(usize, usize), HashSet<usize>> = HashMap::new();
-    let mut node_map: HashMap<usize, HashSet<usize>> = HashMap::new();
-    let mut edge_map: HashMap<(usize, usize), f32> = HashMap::new();
-    let mut terminal_map: HashMap<usize, HashSet<usize>> = HashMap::new();
-    let mut area_map: HashMap<usize, f32> = HashMap::new();
-
-    for i in (0..triangles.len()).step_by(3) {
-        let tri_idx = &triangles[i..i + 3];
-        let point_a = points[tri_idx[0]];
-        let point_b = points[tri_idx[1]];
-        let point_c = points[tri_idx[2]];
-
-        let edges_with_lengths = [
+        // Calculate the lengths of each edge and pair them with their vertex indices
+        let edges_with_lengths: [((usize, usize), f32); 3] = [
             ((min(tri_idx[0], tri_idx[1]), max(tri_idx[0], tri_idx[1])), point_a.euclidean_distance(&point_b)),
             ((min(tri_idx[1], tri_idx[2]), max(tri_idx[1], tri_idx[2])), point_b.euclidean_distance(&point_c)),
             ((min(tri_idx[2], tri_idx[0]), max(tri_idx[2], tri_idx[0])), point_c.euclidean_distance(&point_a)),
         ];
 
-        let mut edges_sorted = edges_with_lengths.to_vec();
-        edges_sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        // Sort edges by length to ensure the longest edge is first
+        let mut edges_sorted: Vec<((usize, usize), f32)> = edges_with_lengths.to_vec();
+        edges_sorted.sort_by(|a: &((usize, usize), f32), b: &((usize, usize), f32)| b.1.partial_cmp(&a.1).unwrap());
+        let terminal_edges: HashSet<usize> = [edges_sorted[0].0 .0, edges_sorted[0].0 .1].iter().cloned().collect::<HashSet<_>>();
 
-        terminal_map.insert(i / 3, [edges_sorted[0].0 .0, edges_sorted[0].0 .1].iter().cloned().collect());
-
-        for &(edge, length) in &edges_sorted {
-            wing_map.entry(edge).or_insert_with(HashSet::new).insert(i / 3);
-            edge_map.insert(edge, length);
-        }
-
-        for &idx in tri_idx.iter() {
-            node_map.entry(idx).or_insert_with(HashSet::new).extend(tri_idx.iter().filter(|&&x| x != idx).cloned());
-        }
-
-        let poly = Polygon::new(LineString::from(vec![
+        // Collect 'area_map' with area for each triangle
+        let poly: Polygon<f32> = Polygon::new(LineString::from(vec![
             (point_a.x(), point_a.y()),
             (point_b.x(), point_b.y()),
             (point_c.x(), point_c.y()),
-            (point_a.x(), point_a.y()), // Close the loop
+            (point_a.x(), point_a.y()),
         ]), vec![]);
+        let area: f32 = poly.unsigned_area();
 
-        area_map.insert(i / 3, poly.unsigned_area()); // Correctly calculate the area
+        // Generate the node connections
+        let mut node_connections: HashMap<usize, HashSet<usize>> = HashMap::new();
+        for &idx in tri_idx.iter() {
+            let connected_nodes: HashSet<usize> = tri_idx.iter().filter(|&&x| x != idx).cloned().collect::<HashSet<_>>();
+            node_connections.insert(idx, connected_nodes);
+        }
+
+        // Return all calculated data for this triangle
+        (tri_idx[0] / 3, terminal_edges, area, edges_sorted, node_connections)
+    }).collect();
+
+    // Initialize shared data structures
+    let mut terminal_map: HashMap<usize, HashSet<usize>> = HashMap::new(); // terminal edge for each triangle
+    let mut area_map: HashMap<usize, f32> = HashMap::new(); // area for each triangle
+    let mut wing_map: HashMap<(usize, usize), HashSet<usize>> = HashMap::new(); // triangle index for each edge
+    let mut edge_map: HashMap<(usize, usize), f32> = HashMap::new(); // length for each edge
+    let mut node_map: HashMap<usize, HashSet<usize>> = HashMap::new(); // vertices connected to each vertex
+
+    // Merge all triangle results
+    for (triangle_index, terminal_edges, area, edges_sorted, node_connections) in triangle_calculation {
+        terminal_map.insert(triangle_index, terminal_edges);
+        area_map.insert(triangle_index, area);
+
+        for &(edge, length) in &edges_sorted {
+            wing_map.entry(edge).or_insert_with(HashSet::new).insert(triangle_index);
+            edge_map.insert(edge, length);
+        }
+
+        for (idx, connections) in node_connections {
+            node_map.entry(idx).or_insert_with(HashSet::new).extend(connections);
+        }
     }
 
-    (points, terminal_map, area_map, wing_map, edge_map, node_map)
+    (terminal_map, area_map, wing_map, edge_map, node_map)
 }
 
 
 fn main() {
-    println!("Hello, world!");
+    let points: Vec<Point<f32>> = random_points((0.0, 0.0), 300.0, 2000);
+    let triangles: Vec<usize> = delaunay(&points);
+    let result: (HashMap<usize, HashSet<usize>>, HashMap<usize, f32>, HashMap<(usize, usize), HashSet<usize>>, HashMap<(usize, usize), f32>, HashMap<usize, HashSet<usize>>) = preprocess(&points, &triangles);
+    println!("{:?}", result);
 }
