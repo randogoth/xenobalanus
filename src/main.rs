@@ -117,7 +117,7 @@ pub fn delaunay(points: &Vec<Point<f32>>) -> Vec<usize> {
 fn preprocess(points: &[Point<f32>], triangles: &[usize]) -> GeometryData {
     let geometry_data: Arc<Mutex<GeometryData>> = Arc::new(Mutex::new(GeometryData::new()));
 
-    triangles.par_chunks(3).enumerate().for_each(|(index, tri_idx)| {
+    triangles.par_chunks(6).enumerate().for_each(|(index, tri_idx)| {
         let points_clone: Vec<Point<f32>> = points.to_vec(); // Clone points to avoid borrowing issues
         let gd: Arc<Mutex<GeometryData>> = geometry_data.clone(); // Clone Arc for use in each thread
 
