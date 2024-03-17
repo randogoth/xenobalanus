@@ -156,12 +156,12 @@ fn delfin(
     .collect();
 
     // Calculate densities based on reverse area
-    let densities: Vec<f32> = geometry_data.triangles.iter()
+    let densities: Vec<f32> = geometry_data.triangles.par_iter()
     .map(|triangle_data: &TriangleData| 1.0 / triangle_data.area)
     .collect();
 
     // Calculate mean and standard deviation of terminal edges lengths
-    let terminal_edge_lengths: Vec<f32> = geometry_data.triangles.iter()
+    let terminal_edge_lengths: Vec<f32> = geometry_data.triangles.par_iter()
     .map(|triangle_data: &TriangleData| geometry_data.edge_lengths[&triangle_data.terminal_edge])
     .collect();
 
@@ -254,7 +254,7 @@ fn delfin(
 }
 
 fn main() {
-    let points: Vec<Point<f32>> = random_points((0.0, 0.0), 1000.0, 100000);
+    let points: Vec<Point<f32>> = random_points((0.0, 0.0), 1000.0, 10000);
     let triangles_indices: Vec<usize> = delaunay(&points);
     // println!("{:?}", triangles_indices);
 
