@@ -8,5 +8,7 @@ edition = "2021"
 [dependencies]
 delaunator = "1.0.2"
 geo = "0.28.0"
+itertools = "0.12.1"
 rand = "0.8.5"
 rayon = "1.9.0"
+statrs = "0.16.0"
