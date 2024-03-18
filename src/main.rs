@@ -7,6 +7,7 @@ use delaunator::{triangulate, Point as DelaunatorPoint};
 use itertools::Itertools;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use std::mem;
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 struct Edge(usize, usize);
@@ -37,9 +38,9 @@ impl GeometryData {
     }
 
     fn add_triangle(&mut self, index: usize, points: &[Point<f32>], tri_idx: &[usize], types: usize) {
-        let point_a = points[tri_idx[0]];
-        let point_b = points[tri_idx[1]];
-        let point_c = points[tri_idx[2]];
+        let point_a: Point<f32> = points[tri_idx[0]];
+        let point_b: Point<f32> = points[tri_idx[1]];
+        let point_c: Point<f32> = points[tri_idx[2]];
     
         // Temporarily store edges_with_lengths for sorting and determining the terminal_edge.
         let mut edges_with_lengths_temp = [
@@ -50,9 +51,9 @@ impl GeometryData {
         
         // Sort edges by length to ensure the longest edge is identified.
         edges_with_lengths_temp.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        let terminal_edge = edges_with_lengths_temp.first().map(|(edge, _)| *edge);
+        let terminal_edge: Option<Edge> = edges_with_lengths_temp.first().map(|(edge, _)| *edge);
     
-        let area = if types == 0 || types == 2 {
+        let area: Option<f32> = if types == 0 || types == 2 {
             Some(Polygon::new(LineString::from(vec![
                 (point_a.x(), point_a.y()),
                 (point_b.x(), point_b.y()),
@@ -63,7 +64,6 @@ impl GeometryData {
             None
         };
     
-        // Update vertex_connections and edge_lengths before moving edges_with_lengths.
         if types == 0 || types == 1 {
             for &(edge, length) in &edges_with_lengths_temp {
                 self.vertex_connections.entry(edge.0).or_insert_with(HashSet::new).insert(edge.1);
@@ -79,7 +79,6 @@ impl GeometryData {
             }
         }
     
-        // Finally, move edges_with_lengths_temp into the TriangleData if necessary.
         if types == 0 || types == 2 {
             self.triangles.push(TriangleData {
                 index,
@@ -358,27 +357,27 @@ fn main() {
     start = Instant::now();
     let geometry_data: GeometryData = preprocess(&points, &triangles_indices, 0);
     duration = start.elapsed();
-    println!("Preprocessed Triangles in: {:#?}", duration);
+    println!("Preprocessed Triangles using {:#?} bytes of RAM in: {:#?}", mem::size_of_val(&geometry_data), duration);
 
     // Define minimum area and minimum distance for delfin function
-    let min_area: f32 = 4.0; // Example threshold for voidness
-    let min_distance: f32 = 1.0; // Example threshold for minimum distance (Z-score)
+    let min_area: f32 = 9.0; // Example threshold for voidness
+    let min_distance: f32 = 3.0; // Example threshold for minimum distance (Z-score)
 
     // Parameters for DTSCAN
-    let min_pts: usize = 2; // Example threshold for minimum number of points
-    let max_closeness: f32 = 0.0; // Example threshold for maximum Z-score closeness
+    let min_pts: usize = 5; // Example threshold for minimum number of points
+    let max_closeness: f32 = -1.3; // Example threshold for maximum Z-score closeness
 
     // Execute delfin function with the generated GeometryData
     start = Instant::now();
     let void_polygons: Vec<HashSet<usize>> = delfin(&geometry_data, min_area, min_distance);
     duration = start.elapsed();
-    println!("Found {:#?} Voids in: {:#?}", void_polygons.len(), duration);
+    println!("Found {:#?} Voids using {:#?} bytes of RAM in: {:#?}", void_polygons.len(), mem::size_of_val(&void_polygons), duration);
 
     // Execute DTSCAN with the prepared data
     start = Instant::now();
     let clusters = dtscan(&geometry_data, min_pts, max_closeness);
     duration = start.elapsed();
-    println!("Found {:#?} Attractors in: {:#?}", clusters.len(), duration);
+    println!("Found {:#?} Attractors using {:#?} bytes of RAM in: {:#?}", clusters.len(), mem::size_of_val(&clusters), duration);
 
 }
 
