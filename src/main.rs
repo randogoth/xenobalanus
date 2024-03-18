@@ -6,6 +6,7 @@ use rayon::prelude::*;
 use delaunator::{triangulate, Point as DelaunatorPoint};
 use itertools::Itertools;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 struct Edge(usize, usize);
@@ -343,11 +344,21 @@ fn dtscan(
 }
 
 fn main() {
-    let points: Vec<Point<f32>> = random_points((0.0, 0.0), 1000.0, 10000);
+    let dots = 225424;
+    let mut start = Instant::now();
+    let points: Vec<Point<f32>> = random_points((0.0, 0.0), 1000.0, dots);
+    let mut duration = start.elapsed();
+    println!("Generated {:#?} random dots in: {:#?}", dots, duration);
+    start = Instant::now();
     let triangles_indices: Vec<usize> = delaunay(&points);
+    duration = start.elapsed();
+    println!("Generated Delaunay triangulation in: {:#?}", duration);
 
     // Preprocess to create GeometryData with types set to 0 or 1 to ensure vertex_to_triangles is populated
+    start = Instant::now();
     let geometry_data: GeometryData = preprocess(&points, &triangles_indices, 0);
+    duration = start.elapsed();
+    println!("Preprocessed Triangles in: {:#?}", duration);
 
     // Define minimum area and minimum distance for delfin function
     let min_area: f32 = 4.0; // Example threshold for voidness
@@ -358,15 +369,16 @@ fn main() {
     let max_closeness: f32 = 0.0; // Example threshold for maximum Z-score closeness
 
     // Execute delfin function with the generated GeometryData
+    start = Instant::now();
     let void_polygons: Vec<HashSet<usize>> = delfin(&geometry_data, min_area, min_distance);
-
-    // Print the count of void polygons found by delfin
-    println!("Void Polygons Found by delfin: {:?}", void_polygons.len());
+    duration = start.elapsed();
+    println!("Found {:#?} Voids in: {:#?}", void_polygons.len(), duration);
 
     // Execute DTSCAN with the prepared data
+    start = Instant::now();
     let clusters = dtscan(&geometry_data, min_pts, max_closeness);
+    duration = start.elapsed();
+    println!("Found {:#?} Attractors in: {:#?}", clusters.len(), duration);
 
-    // Print the count of clusters found by DTSCAN
-    println!("Clusters Found by DTSCAN: {:?}", clusters.len());
 }
 
