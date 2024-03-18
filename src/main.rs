@@ -7,7 +7,6 @@ use delaunator::{triangulate, Point as DelaunatorPoint};
 use itertools::Itertools;
 use std::sync::{Arc, Mutex};
 
-
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 struct Edge(usize, usize);
 
@@ -25,7 +24,7 @@ struct GeometryData {
     triangles: Vec<TriangleData>,
     edge_to_triangles: HashMap<Edge, Vec<usize>>, // Maps an edge to triangle indices
     edge_lengths: HashMap<Edge, f32>, // Edge lengths
-    vertex_to_triangles: HashMap<usize, Vec<usize>>, // Maps a vertex to connected triangle indices
+    vertex_connections: HashMap<usize, HashSet<usize>>, // Direct connections between vertices, for DTSCAN
 }
 
 impl GeometryData {
@@ -34,7 +33,7 @@ impl GeometryData {
             triangles: Vec::new(),
             edge_to_triangles: HashMap::new(),
             edge_lengths: HashMap::new(),
-            vertex_to_triangles: HashMap::new(),
+            vertex_connections: HashMap::new(), // Adjusted for DTSCAN
         }
     }
 
@@ -43,17 +42,17 @@ impl GeometryData {
         let point_b = points[tri_idx[1]];
         let point_c = points[tri_idx[2]];
     
-        let edges_with_lengths: Option<Vec<(Edge, f32)>> = if types == 0 || types == 2 {
-            Some([
-                (Edge(min(tri_idx[0], tri_idx[1]), max(tri_idx[0], tri_idx[1])), point_a.euclidean_distance(&point_b)),
-                (Edge(min(tri_idx[1], tri_idx[2]), max(tri_idx[1], tri_idx[2])), point_b.euclidean_distance(&point_c)),
-                (Edge(min(tri_idx[2], tri_idx[0]), max(tri_idx[2], tri_idx[0])), point_c.euclidean_distance(&point_a)),
-            ].to_vec().into_iter().sorted_by(|a, b| b.1.partial_cmp(&a.1).unwrap()).collect())
-        } else {
-            None
-        };
+        // Temporarily store edges_with_lengths for sorting and determining the terminal_edge.
+        let mut edges_with_lengths_temp = [
+            (Edge(min(tri_idx[0], tri_idx[1]), max(tri_idx[0], tri_idx[1])), point_a.euclidean_distance(&point_b)),
+            (Edge(min(tri_idx[1], tri_idx[2]), max(tri_idx[1], tri_idx[2])), point_b.euclidean_distance(&point_c)),
+            (Edge(min(tri_idx[2], tri_idx[0]), max(tri_idx[2], tri_idx[0])), point_c.euclidean_distance(&point_a)),
+        ].to_vec();
+        
+        // Sort edges by length to ensure the longest edge is identified.
+        edges_with_lengths_temp.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        let terminal_edge = edges_with_lengths_temp.first().map(|(edge, _)| *edge);
     
-        let terminal_edge = edges_with_lengths.as_ref().map(|edges| edges[0].0);
         let area = if types == 0 || types == 2 {
             Some(Polygon::new(LineString::from(vec![
                 (point_a.x(), point_a.y()),
@@ -65,34 +64,33 @@ impl GeometryData {
             None
         };
     
-        let node_connections: Option<HashSet<usize>> = if types == 0 || types == 1 {
-            Some(tri_idx.iter().cloned().collect())
+        // Update vertex_connections and edge_lengths before moving edges_with_lengths.
+        if types == 0 || types == 1 {
+            for &(edge, length) in &edges_with_lengths_temp {
+                self.vertex_connections.entry(edge.0).or_insert_with(HashSet::new).insert(edge.1);
+                self.vertex_connections.entry(edge.1).or_insert_with(HashSet::new).insert(edge.0);
+                self.edge_lengths.insert(edge, length);
+                self.edge_to_triangles.entry(edge).or_default().push(index);
+            }
         } else {
-            None
-        };
-    
-        self.triangles.push(TriangleData {
-            index,
-            area,
-            terminal_edge,
-            edges_with_lengths: edges_with_lengths.clone(),
-            node_connections: node_connections.clone(),
-        });
-    
-        if let Some(edges) = &edges_with_lengths {
-            for &(edge, length) in edges {
+            // For types == 2, only update edge_lengths and edge_to_triangles.
+            for &(edge, length) in &edges_with_lengths_temp {
                 self.edge_lengths.insert(edge, length);
                 self.edge_to_triangles.entry(edge).or_default().push(index);
             }
         }
     
-        if let Some(nodes) = &node_connections {
-            for &vertex in nodes {
-                self.vertex_to_triangles.entry(vertex).or_default().push(index);
-            }
+        // Finally, move edges_with_lengths_temp into the TriangleData if necessary.
+        if types == 0 || types == 2 {
+            self.triangles.push(TriangleData {
+                index,
+                area,
+                terminal_edge,
+                edges_with_lengths: Some(edges_with_lengths_temp), // Moved here, no clone required.
+                node_connections: None,
+            });
         }
-    }
-    
+    }    
 }
 
 pub fn random_points(center: (f32, f32), radius: f32, num_points: usize) -> Vec<Point<f32>> {
@@ -128,20 +126,16 @@ pub fn delaunay(points: &Vec<Point<f32>>) -> Vec<usize> {
 }
 
 fn preprocess(points: &[Point<f32>], triangles: &[usize], types: usize) -> GeometryData {
-    let geometry_data: Arc<Mutex<GeometryData>> = Arc::new(Mutex::new(GeometryData::new()));
+    let geometry_data = Arc::new(Mutex::new(GeometryData::new()));
 
-    triangles.par_chunks(6).enumerate().for_each(|(index, tri_idx)| {
-        let points_clone: Vec<Point<f32>> = points.to_vec(); // Clone points to avoid borrowing issues
-        let gd: Arc<Mutex<GeometryData>> = geometry_data.clone(); // Clone Arc for use in each thread
+    triangles.par_chunks(3).enumerate().for_each(|(index, tri_idx)| {
+        let gd = geometry_data.clone(); // Clone Arc for use in each thread
 
-        gd.lock().unwrap().add_triangle(index, &points_clone, tri_idx, types);
+        gd.lock().unwrap().add_triangle(index, points, tri_idx, types);
     });
 
-    // Extract the GeometryData from the Arc<Mutex<>>. This is safe to do here because
-    // the par_iter has completed, and we know no other threads are accessing it.
     Arc::try_unwrap(geometry_data).unwrap().into_inner().unwrap()
 }
-
 
 fn mean_std(dataset: Vec<f32>) -> (f32, f32) {
     let mean: f32 = dataset.iter().sum::<f32>() / dataset.len() as f32;
@@ -275,20 +269,108 @@ fn delfin(
     return void_polygons;
 }
 
+// Function to recursively expand clusters
+fn expand_cluster(
+    vertex_idx: usize,
+    visited: &mut HashSet<usize>,
+    cluster: &mut HashSet<usize>,
+    geometry_data: &GeometryData,
+    mean_edge_length: f32,
+    std_edge_length: f32,
+    max_closeness: f32,
+) {
+    visited.insert(vertex_idx);
+
+    if let Some(neighbors) = geometry_data.vertex_connections.get(&vertex_idx) {
+        for &neighbor_idx in neighbors {
+            if visited.contains(&neighbor_idx) {
+                continue;
+            }
+            let edge = Edge(min(vertex_idx, neighbor_idx), max(vertex_idx, neighbor_idx));
+            if let Some(&length) = geometry_data.edge_lengths.get(&edge) {
+                let z_score: f32 = (length - mean_edge_length) / std_edge_length;
+                if z_score <= max_closeness {
+                    cluster.insert(neighbor_idx);
+                    expand_cluster(
+                        neighbor_idx,
+                        visited,
+                        cluster,
+                        geometry_data,
+                        mean_edge_length,
+                        std_edge_length,
+                        max_closeness,
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn dtscan(
+    geometry_data: &GeometryData,
+    min_pts: usize,
+    max_closeness: f32,
+) -> Vec<HashSet<usize>> {
+    let mut clusters: Vec<HashSet<usize>> = Vec::new();
+    let mut visited: HashSet<usize> = HashSet::new();
+    let edge_lengths_values: Vec<f32> = geometry_data.edge_lengths.values().cloned().collect();
+    let (mean_edge_length, std_edge_length) = mean_std(edge_lengths_values);
+    
+    for (&vertex_idx, neighbors) in &geometry_data.vertex_connections {
+        if visited.contains(&vertex_idx) {
+            continue;
+        }
+        // Check if vertex is a core vertex based on the number of connections and edge lengths
+        if neighbors.len() >= min_pts && neighbors.iter().all(|&n| {
+            if let Some(&length) = geometry_data.edge_lengths.get(&Edge(min(vertex_idx, n), max(vertex_idx, n))) {
+                let z_score: f32 = (length - mean_edge_length) / std_edge_length;
+                z_score <= max_closeness
+            } else {
+                false
+            }
+        }) {
+            let mut cluster: HashSet<usize> = HashSet::new();
+            expand_cluster(
+                vertex_idx,
+                &mut visited,
+                &mut cluster,
+                geometry_data,
+                mean_edge_length,
+                std_edge_length,
+                max_closeness,
+            );
+            clusters.push(cluster);
+        }
+    }
+
+    clusters
+}
+
 fn main() {
     let points: Vec<Point<f32>> = random_points((0.0, 0.0), 1000.0, 10000);
     let triangles_indices: Vec<usize> = delaunay(&points);
 
-    // Preprocess to create GeometryData
+    // Preprocess to create GeometryData with types set to 0 or 1 to ensure vertex_to_triangles is populated
     let geometry_data: GeometryData = preprocess(&points, &triangles_indices, 0);
 
     // Define minimum area and minimum distance for delfin function
     let min_area: f32 = 4.0; // Example threshold for voidness
     let min_distance: f32 = 1.0; // Example threshold for minimum distance (Z-score)
 
+    // Parameters for DTSCAN
+    let min_pts: usize = 2; // Example threshold for minimum number of points
+    let max_closeness: f32 = 0.0; // Example threshold for maximum Z-score closeness
+
     // Execute delfin function with the generated GeometryData
     let void_polygons: Vec<HashSet<usize>> = delfin(&geometry_data, min_area, min_distance);
 
-    // To display the result, let's just print the count of void polygons found
-    println!("Void Polygons Found: {:?}", void_polygons.len());
+    // Print the count of void polygons found by delfin
+    println!("Void Polygons Found by delfin: {:?}", void_polygons.len());
+
+    // Execute DTSCAN with the prepared data
+    let clusters = dtscan(&geometry_data, min_pts, max_closeness);
+
+    // Print the count of clusters found by DTSCAN
+    println!("Clusters Found by DTSCAN: {:?}", clusters.len());
 }
+
