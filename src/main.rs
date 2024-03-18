@@ -141,23 +141,22 @@ fn mean_std(dataset: Vec<f32>) -> (f32, f32) {
 
 fn delfin(
     geometry_data: &GeometryData,
-    min_voidness: f32,
+    min_area: f32,
     min_distance: f32,
 ) -> Vec<HashSet<usize>> {
 
     // Sort all triangles by the longest terminal edge
-    let triangles_sorted: Vec<usize> = geometry_data.triangles.iter()
+    let triangles_sorted: Vec<(usize, f32)> = geometry_data.triangles.iter()
     .map(|triangle_data: &TriangleData| {
         let terminal_edge_length: f32 = geometry_data.edge_lengths[&triangle_data.terminal_edge];
         (triangle_data.index, terminal_edge_length)
     })
     .sorted_by(|a, b| b.1.partial_cmp(&a.1).unwrap()) // Sort in descending order by edge length
-    .map(|(index, _)| index) // Extract triangle indices
     .collect();
 
     // Calculate densities based on reverse area
-    let densities: Vec<f32> = geometry_data.triangles.par_iter()
-    .map(|triangle_data: &TriangleData| 1.0 / triangle_data.area)
+    let areas: Vec<f32> = geometry_data.triangles.par_iter()
+    .map(|triangle_data: &TriangleData| triangle_data.area)
     .collect();
 
     // Calculate mean and standard deviation of terminal edges lengths
@@ -166,32 +165,27 @@ fn delfin(
     .collect();
 
     let (mean_terminal_edge, std_terminal_edge) = mean_std(terminal_edge_lengths);
-    let (mean_density, std_density) = mean_std(densities);
+    let (mean_area, std_area) = mean_std(areas);
 
     let mut void_polygons: Vec<HashSet<usize>> = Vec::new();
     let mut processed_triangles: HashSet<usize> = HashSet::new();
 
-    for &triangle_index in &triangles_sorted {
+    for &(triangle_index, terminal_edge_length) in &triangles_sorted {
         // Skip if this triangle has already been processed
         if processed_triangles.contains(&triangle_index) {
             continue;
-        }
-    
-        // Retrieve the terminal edge for the current triangle
-        let triangle_data: &TriangleData = &geometry_data.triangles[triangle_index];
-        let terminal_edge: Edge = triangle_data.terminal_edge;
+        }        
     
         // Calculate the Z-score for the terminal edge length
-        let terminal_edge_length: f32 = geometry_data.edge_lengths[&terminal_edge];
-        let z_score: f32 = (terminal_edge_length - mean_terminal_edge) / std_terminal_edge;
-        // println!("Terminal Length: {}", terminal_edge_length);
-        // println!("Terminal Length Z-Score: {}", z_score);
+        let distance_z_score: f32 = (terminal_edge_length - mean_terminal_edge) / std_terminal_edge;
         // Continue if the Z-score is below the minimum distance threshold
-        if z_score < min_distance {
+        if distance_z_score < min_distance {
             continue;
         }
-    
+
         // Retrieve triangles that share the terminal edge, continue if less than 2 triangles share it
+        let triangle_data: &TriangleData = &geometry_data.triangles[triangle_index];
+        let terminal_edge: Edge = triangle_data.terminal_edge;
         if let Some(connected_triangles) = geometry_data.edge_to_triangles.get(&terminal_edge) {
             if connected_triangles.len() < 2 {
                 continue;
@@ -239,15 +233,11 @@ fn delfin(
             .map(|triangle_data: &TriangleData| triangle_data.area)
             .sum();
     
-        // Calculate the polygon density
-        let polygon_density: f32 = if total_area > 0.0 { 1.0 / total_area } else { 0.0 };
+        // Calculate the area Z-score
+        let area_z_score: f32 = (total_area - mean_area) / std_area;
     
-        // Calculate the density Z-score
-        let density_z_score: f32 = (polygon_density - mean_density) / std_density;
-        // println!("Density Z-Score: {}", density_z_score.abs());
-    
-        // Filter based on the density Z-score and the minimum number of triangles
-        density_z_score.abs() >= min_voidness && poly_set.len() >= 3
+        // Filter based on the area Z-score and the minimum number of triangles
+        area_z_score >= min_area && poly_set.len() >= 3
     });
     
     return void_polygons;
@@ -256,18 +246,17 @@ fn delfin(
 fn main() {
     let points: Vec<Point<f32>> = random_points((0.0, 0.0), 1000.0, 10000);
     let triangles_indices: Vec<usize> = delaunay(&points);
-    // println!("{:?}", triangles_indices);
 
     // Preprocess to create GeometryData
     let geometry_data: GeometryData = preprocess(&points, &triangles_indices);
 
     // Define minimum voidness and minimum distance for delfin function
-    let min_voidness: f32 = 0.2; // Example threshold for voidness
-    let min_distance: f32 = 0.0; // Example threshold for minimum distance (Z-score)
+    let min_area: f32 = 4.0; // Example threshold for voidness
+    let min_distance: f32 = 1.0; // Example threshold for minimum distance (Z-score)
 
     // Execute delfin function with the generated GeometryData
-    let void_polygons: Vec<HashSet<usize>> = delfin(&geometry_data, min_voidness, min_distance);
+    let void_polygons: Vec<HashSet<usize>> = delfin(&geometry_data, min_area, min_distance);
 
     // To display the result, let's just print the count of void polygons found
-    println!("Void Polygons Found: {}", void_polygons.len());
+    println!("Void Polygons Found: {:?}", void_polygons.len());
 }
