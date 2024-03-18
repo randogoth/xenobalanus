@@ -14,9 +14,7 @@ struct Edge(usize, usize);
 struct TriangleData {
     index: usize,
     area: Option<f32>,
-    terminal_edge: Option<Edge>,
-    edges_with_lengths: Option<Vec<(Edge, f32)>>,
-    node_connections: Option<HashSet<usize>>,
+    terminal_edge: Option<Edge>
 }
 
 #[derive(Debug)]
@@ -85,9 +83,7 @@ impl GeometryData {
             self.triangles.push(TriangleData {
                 index,
                 area,
-                terminal_edge,
-                edges_with_lengths: Some(edges_with_lengths_temp), // Moved here, no clone required.
-                node_connections: None,
+                terminal_edge
             });
         }
     }    
