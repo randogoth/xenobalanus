@@ -16,7 +16,8 @@ struct Edge(usize, usize);
 struct TriangleData {
     index: usize,
     area: Option<f32>,
-    terminal_edge: Option<Edge>
+    terminal_edge: Option<Edge>,
+    third_vertex: Option<usize>
 }
 
 #[derive(Debug)]
@@ -53,6 +54,11 @@ impl GeometryData {
         edges_with_lengths_temp.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         let terminal_edge: Option<Edge> = edges_with_lengths_temp.first().map(|(edge, _)| *edge);
     
+        // Determine the third vertex
+        let third_vertex: Option<usize> = tri_idx.iter().find(|&&idx| {
+            idx != terminal_edge.unwrap().0 && idx != terminal_edge.unwrap().1
+        }).copied();
+
         let area: Option<f32> = if types == 0 || types == 2 {
             Some(Polygon::new(LineString::from(vec![
                 (point_a.x(), point_a.y()),
@@ -83,7 +89,8 @@ impl GeometryData {
             self.triangles.push(TriangleData {
                 index,
                 area,
-                terminal_edge
+                terminal_edge,
+                third_vertex
             });
         }
     }    
@@ -146,7 +153,7 @@ fn delfin(
     geometry_data: &GeometryData,
     min_area: f32,
     min_distance: f32,
-) -> Vec<HashSet<usize>> {
+) -> Vec<Vec<HashSet<usize>>> {
 
     // Sort all triangles by the longest terminal edge
     let triangles_sorted: Vec<(usize, f32)> = geometry_data.triangles.iter()
@@ -262,7 +269,24 @@ fn delfin(
         area_z_score >= min_area && poly_set.len() >= 3
     });
     
-    return void_polygons;
+    void_polygons.iter().map(|triangle_set| {
+        triangle_set.iter().map(|&triangle_index| {
+            let triangle = &geometry_data.triangles[triangle_index];
+            let mut vertices = HashSet::new();
+            if let Some(terminal_edge) = triangle.terminal_edge {
+                vertices.insert(terminal_edge.0);
+                vertices.insert(terminal_edge.1);
+            }
+            if let Some(third_vertex) = triangle.third_vertex {
+                vertices.insert(third_vertex);
+            }
+
+            vertices
+        })
+        .collect::<Vec<HashSet<usize>>>()
+    })
+    .collect()
+
 }
 
 // Function to recursively expand clusters
@@ -342,6 +366,14 @@ fn dtscan(
     clusters
 }
 
+fn improbability_z_score(total_area: f32, total_dots: u32, sub_area: f32, sub_dots: u32) -> f32 {
+    // expected dots for the area under a Complete Spatial Randomness scenario
+    let csr_lambda: f32 = total_dots as f32 - ( sub_area / total_area);
+    // Z-Score to quantify how improbable a cluster or void is in relation to CSR
+    let z_score: f32 = (sub_dots as f32 - csr_lambda) / csr_lambda.sqrt();
+    z_score
+}
+
 fn main() {
     let dots = 225424;
     let mut start = Instant::now();
@@ -369,7 +401,7 @@ fn main() {
 
     // Execute delfin function with the generated GeometryData
     start = Instant::now();
-    let void_polygons: Vec<HashSet<usize>> = delfin(&geometry_data, min_area, min_distance);
+    let void_polygons: Vec<Vec<HashSet<usize>>> = delfin(&geometry_data, min_area, min_distance);
     duration = start.elapsed();
     println!("Found {:#?} Voids using {:#?} bytes of RAM in: {:#?}", void_polygons.len(), mem::size_of_val(&void_polygons), duration);
 
