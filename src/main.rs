@@ -15,9 +15,9 @@ struct Edge(usize, usize);
 #[derive(Debug)]
 struct TriangleData {
     index: usize,
+    vertices: Vec<usize>,
     area: Option<f32>,
-    terminal_edge: Option<Edge>,
-    third_vertex: Option<usize>
+    terminal_edge: Option<Edge>
 }
 
 #[derive(Debug)]
@@ -43,6 +43,9 @@ impl GeometryData {
         let point_b: Point<f32> = points[tri_idx[1]];
         let point_c: Point<f32> = points[tri_idx[2]];
     
+        let mut vertices = vec![tri_idx[0], tri_idx[1], tri_idx[2]];
+        vertices.sort_unstable();
+
         // Temporarily store edges_with_lengths for sorting and determining the terminal_edge.
         let mut edges_with_lengths_temp = [
             (Edge(min(tri_idx[0], tri_idx[1]), max(tri_idx[0], tri_idx[1])), point_a.euclidean_distance(&point_b)),
@@ -53,11 +56,6 @@ impl GeometryData {
         // Sort edges by length to ensure the longest edge is identified.
         edges_with_lengths_temp.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         let terminal_edge: Option<Edge> = edges_with_lengths_temp.first().map(|(edge, _)| *edge);
-    
-        // Determine the third vertex
-        let third_vertex: Option<usize> = tri_idx.iter().find(|&&idx| {
-            idx != terminal_edge.unwrap().0 && idx != terminal_edge.unwrap().1
-        }).copied();
 
         let area: Option<f32> = if types == 0 || types == 2 {
             Some(Polygon::new(LineString::from(vec![
@@ -88,9 +86,9 @@ impl GeometryData {
         if types == 0 || types == 2 {
             self.triangles.push(TriangleData {
                 index,
+                vertices,
                 area,
-                terminal_edge,
-                third_vertex
+                terminal_edge
             });
         }
     }    
@@ -153,7 +151,7 @@ fn delfin(
     geometry_data: &GeometryData,
     min_area: f32,
     min_distance: f32,
-) -> Vec<Vec<HashSet<usize>>> {
+) -> Vec<Vec<Vec<usize>>> {
 
     // Sort all triangles by the longest terminal edge
     let triangles_sorted: Vec<(usize, f32)> = geometry_data.triangles.iter()
@@ -269,73 +267,32 @@ fn delfin(
         area_z_score >= min_area && poly_set.len() >= 3
     });
     
-    void_polygons.iter().map(|triangle_set| {
-        triangle_set.iter().map(|&triangle_index| {
-            let triangle = &geometry_data.triangles[triangle_index];
-            let mut vertices = HashSet::new();
-            if let Some(terminal_edge) = triangle.terminal_edge {
-                vertices.insert(terminal_edge.0);
-                vertices.insert(terminal_edge.1);
-            }
-            if let Some(third_vertex) = triangle.third_vertex {
-                vertices.insert(third_vertex);
-            }
-
-            vertices
+    let void_polygons_vertices: Vec<Vec<Vec<usize>>> = void_polygons.into_iter().map(|triangle_set: HashSet<usize>| {
+        triangle_set.into_iter().map(|triangle_index| {
+            // Directly retrieve the vertices of the triangle
+            geometry_data.triangles[triangle_index].vertices.clone()
         })
-        .collect::<Vec<HashSet<usize>>>()
+        // Collecting into Vec<Vec<usize>>, each inner Vec<usize> represents a triangle's vertices
+        .collect::<Vec<Vec<usize>>>()
     })
-    .collect()
+    // Collect each void area's vertex sets into the final Vec
+    .collect::<Vec<Vec<Vec<usize>>>>();
 
-}
+    // Return the transformed structure
+    void_polygons_vertices
 
-// Function to recursively expand clusters
-fn expand_cluster(
-    vertex_idx: usize,
-    visited: &mut HashSet<usize>,
-    cluster: &mut HashSet<usize>,
-    geometry_data: &GeometryData,
-    mean_edge_length: f32,
-    std_edge_length: f32,
-    max_closeness: f32,
-) {
-    visited.insert(vertex_idx);
-
-    if let Some(neighbors) = geometry_data.vertex_connections.get(&vertex_idx) {
-        for &neighbor_idx in neighbors {
-            if visited.contains(&neighbor_idx) {
-                continue;
-            }
-            let edge = Edge(min(vertex_idx, neighbor_idx), max(vertex_idx, neighbor_idx));
-            if let Some(&length) = geometry_data.edge_lengths.get(&edge) {
-                let z_score: f32 = (length - mean_edge_length) / std_edge_length;
-                if z_score <= max_closeness {
-                    cluster.insert(neighbor_idx);
-                    expand_cluster(
-                        neighbor_idx,
-                        visited,
-                        cluster,
-                        geometry_data,
-                        mean_edge_length,
-                        std_edge_length,
-                        max_closeness,
-                    );
-                }
-            }
-        }
-    }
 }
 
 fn dtscan(
     geometry_data: &GeometryData,
     min_pts: usize,
     max_closeness: f32,
-) -> Vec<HashSet<usize>> {
-    let mut clusters: Vec<HashSet<usize>> = Vec::new();
+) -> Vec<Vec<usize>> {
+    let mut clusters: Vec<Vec<usize>> = Vec::new();
     let mut visited: HashSet<usize> = HashSet::new();
     let edge_lengths_values: Vec<f32> = geometry_data.edge_lengths.values().cloned().collect();
     let (mean_edge_length, std_edge_length) = mean_std(edge_lengths_values);
-    
+
     for (&vertex_idx, neighbors) in &geometry_data.vertex_connections {
         if visited.contains(&vertex_idx) {
             continue;
@@ -349,22 +306,38 @@ fn dtscan(
                 false
             }
         }) {
-            let mut cluster: HashSet<usize> = HashSet::new();
-            expand_cluster(
-                vertex_idx,
-                &mut visited,
-                &mut cluster,
-                geometry_data,
-                mean_edge_length,
-                std_edge_length,
-                max_closeness,
-            );
-            clusters.push(cluster);
+            let mut cluster: Vec<usize> = Vec::new();
+            let mut to_expand: Vec<usize> = vec![vertex_idx];
+
+            while let Some(current_vertex) = to_expand.pop() {
+                if !visited.insert(current_vertex) {
+                    continue;
+                }
+
+                cluster.push(current_vertex);
+
+                // Add neighbors that are within max_closeness to to_expand
+                geometry_data.vertex_connections.get(&current_vertex).map(|neighbors: &HashSet<usize>| {
+                    for &neighbor in neighbors {
+                        if let Some(&length) = geometry_data.edge_lengths.get(&Edge(min(current_vertex, neighbor), max(current_vertex, neighbor))) {
+                            let z_score = (length - mean_edge_length) / std_edge_length;
+                            if z_score <= max_closeness && !visited.contains(&neighbor) {
+                                to_expand.push(neighbor);
+                            }
+                        }
+                    }
+                });
+            }
+
+            if !cluster.is_empty() {
+                clusters.push(cluster); // Add the constructed cluster to the list of clusters
+            }
         }
     }
 
     clusters
 }
+
 
 fn improbability_z_score(total_area: f32, total_dots: u32, sub_area: f32, sub_dots: u32) -> f32 {
     // expected dots for the area under a Complete Spatial Randomness scenario
@@ -401,7 +374,7 @@ fn main() {
 
     // Execute delfin function with the generated GeometryData
     start = Instant::now();
-    let void_polygons: Vec<Vec<HashSet<usize>>> = delfin(&geometry_data, min_area, min_distance);
+    let void_polygons: Vec<Vec<Vec<usize>>> = delfin(&geometry_data, min_area, min_distance);
     duration = start.elapsed();
     println!("Found {:#?} Voids using {:#?} bytes of RAM in: {:#?}", void_polygons.len(), mem::size_of_val(&void_polygons), duration);
 
@@ -410,6 +383,7 @@ fn main() {
     let clusters = dtscan(&geometry_data, min_pts, max_closeness);
     duration = start.elapsed();
     println!("Found {:#?} Attractors using {:#?} bytes of RAM in: {:#?}", clusters.len(), mem::size_of_val(&clusters), duration);
-
+    println!("{:?}", void_polygons);
+    println!("{:?}", clusters);
 }
 
