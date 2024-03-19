@@ -539,6 +539,7 @@ version = "0.1.0"
 dependencies = [
  "delaunator",
  "geo",
+ "geo-types",
  "itertools 0.12.1",
  "rand",
  "rayon",

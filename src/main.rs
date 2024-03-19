@@ -1,4 +1,5 @@
-use geo::{Point, Polygon, LineString, EuclideanDistance, Area};
+use geo::{Point, Polygon, LineString, EuclideanDistance, Area, ConvexHull, Centroid, MultiPoint};
+use geo_types::point;
 use std::collections::{HashMap, HashSet};
 use std::cmp::{min, max};
 use rand::Rng;
@@ -94,6 +95,15 @@ impl GeometryData {
     }    
 }
 
+#[derive(Debug)]
+struct Anomaly {
+    anomaly_type: usize,
+    hull: Polygon<f32>,
+    centroid: Option<Point<f32>>,
+    area: f32,
+    z_score: f32,
+}
+
 pub fn random_points(center: (f32, f32), radius: f32, num_points: usize) -> Vec<Point<f32>> {
     let mut rng: rand::prelude::ThreadRng = rand::thread_rng();
     let mut points: Vec<Point<f32>> = Vec::with_capacity(num_points);
@@ -151,7 +161,7 @@ fn delfin(
     geometry_data: &GeometryData,
     min_area: f32,
     min_distance: f32,
-) -> Vec<Vec<Vec<usize>>> {
+) -> Vec<HashSet<usize>> {
 
     // Sort all triangles by the longest terminal edge
     let triangles_sorted: Vec<(usize, f32)> = geometry_data.triangles.iter()
@@ -266,20 +276,22 @@ fn delfin(
         // Filter based on the area Z-score and the minimum number of triangles.
         area_z_score >= min_area && poly_set.len() >= 3
     });
-    
-    let void_polygons_vertices: Vec<Vec<Vec<usize>>> = void_polygons.into_iter().map(|triangle_set: HashSet<usize>| {
-        triangle_set.into_iter().map(|triangle_index| {
-            // Directly retrieve the vertices of the triangle
-            geometry_data.triangles[triangle_index].vertices.clone()
-        })
-        // Collecting into Vec<Vec<usize>>, each inner Vec<usize> represents a triangle's vertices
-        .collect::<Vec<Vec<usize>>>()
-    })
-    // Collect each void area's vertex sets into the final Vec
-    .collect::<Vec<Vec<Vec<usize>>>>();
 
-    // Return the transformed structure
-    void_polygons_vertices
+    return void_polygons;
+    
+    // let void_polygons_vertices: Vec<Vec<Vec<usize>>> = void_polygons.into_iter().map(|triangle_set: HashSet<usize>| {
+    //     triangle_set.into_iter().map(|triangle_index| {
+    //         // Directly retrieve the vertices of the triangle
+    //         geometry_data.triangles[triangle_index].vertices.clone()
+    //     })
+    //     // Collecting into Vec<Vec<usize>>, each inner Vec<usize> represents a triangle's vertices
+    //     .collect::<Vec<Vec<usize>>>()
+    // })
+    // // Collect each void area's vertex sets into the final Vec
+    // .collect::<Vec<Vec<Vec<usize>>>>();
+
+    // // Return the transformed structure
+    // void_polygons_vertices
 
 }
 
@@ -347,8 +359,66 @@ fn improbability_z_score(total_area: f32, total_dots: u32, sub_area: f32, sub_do
     z_score
 }
 
+fn postprocess(
+    points: Vec<geo_types::Point<f32>>,
+    voids: Vec<HashSet<usize>>,
+    clusters: Vec<Vec<usize>>,
+    geometry_data: &GeometryData, // Assuming this contains areas for triangles
+    total_area: f32,
+    total_dots: u32,
+) -> Vec<Anomaly> {
+    let mut anomalies: Vec<Anomaly> = Vec::new();
+
+    // Process clusters
+    for cluster in clusters {
+        let cluster_points: Vec<_> = cluster.iter().map(|&idx| points[idx]).collect();
+        let hull_polygon: Polygon<f32> = MultiPoint(cluster_points).convex_hull();
+        let centroid: Option<Point<f32>> = hull_polygon.centroid();
+        let hull_area: f32 = hull_polygon.unsigned_area();
+        let z_score: f32 = improbability_z_score(total_area, total_dots, hull_area, cluster.len() as u32);
+
+        anomalies.push(Anomaly {
+            anomaly_type: 1,
+            hull: hull_polygon,
+            centroid: centroid,
+            area: hull_area,
+            z_score,
+        });
+    }
+
+    // Process voids
+    for void in voids {
+        let mut total_void_area: f32 = 0.0;
+        let mut all_points = Vec::new();
+
+        for &triangle_index in void.iter() {
+            let triangle = &geometry_data.triangles[triangle_index];
+            total_void_area += triangle.area.unwrap_or(0.0);
+            for &vertex_idx in &triangle.vertices {
+                all_points.push(points[vertex_idx]);
+            }
+        }
+
+        let all_points_len: usize = all_points.len();
+        let hull_polygon: Polygon<f32> = MultiPoint(all_points).convex_hull();
+        let centroid: Option<Point<f32>> = hull_polygon.centroid();
+        let z_score: f32 = improbability_z_score(total_area, total_dots, total_void_area, all_points_len as u32);
+
+        anomalies.push(Anomaly {
+            anomaly_type: 2,
+            hull: hull_polygon,
+            centroid: centroid,
+            area: total_void_area,
+            z_score,
+        });
+    }
+
+    anomalies
+}
+
 fn main() {
-    let dots = 225424;
+    let dots: usize = 225424;
+    let radius: f32 = 1000.0;
     let mut start = Instant::now();
     let points: Vec<Point<f32>> = random_points((0.0, 0.0), 1000.0, dots);
     let mut duration = start.elapsed();
@@ -374,16 +444,16 @@ fn main() {
 
     // Execute delfin function with the generated GeometryData
     start = Instant::now();
-    let void_polygons: Vec<Vec<Vec<usize>>> = delfin(&geometry_data, min_area, min_distance);
+    let void_polygons: Vec<HashSet<usize>> = delfin(&geometry_data, min_area, min_distance);
     duration = start.elapsed();
     println!("Found {:#?} Voids using {:#?} bytes of RAM in: {:#?}", void_polygons.len(), mem::size_of_val(&void_polygons), duration);
 
     // Execute DTSCAN with the prepared data
     start = Instant::now();
-    let clusters = dtscan(&geometry_data, min_pts, max_closeness);
+    let clusters: Vec<Vec<usize>> = dtscan(&geometry_data, min_pts, max_closeness);
     duration = start.elapsed();
     println!("Found {:#?} Attractors using {:#?} bytes of RAM in: {:#?}", clusters.len(), mem::size_of_val(&clusters), duration);
-    println!("{:?}", void_polygons);
-    println!("{:?}", clusters);
+    let area: f64 = std::f64::consts::PI * (radius as f64).powi(2);
+    let anomalies = postprocess(points, void_polygons, clusters, &geometry_data, area as f32, dots as u32);
+    println!("{:?}", anomalies)
 }
-
