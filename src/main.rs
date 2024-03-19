@@ -353,7 +353,7 @@ fn dtscan(
 
 fn improbability_z_score(total_area: f32, total_dots: u32, sub_area: f32, sub_dots: u32) -> f32 {
     // expected dots for the area under a Complete Spatial Randomness scenario
-    let csr_lambda: f32 = total_dots as f32 - ( sub_area / total_area);
+    let csr_lambda: f32 = (total_dots as f32) * ( sub_area / total_area);
     // Z-Score to quantify how improbable a cluster or void is in relation to CSR
     let z_score: f32 = (sub_dots as f32 - csr_lambda) / csr_lambda.sqrt();
     z_score
@@ -453,6 +453,8 @@ fn main() {
     let clusters: Vec<Vec<usize>> = dtscan(&geometry_data, min_pts, max_closeness);
     duration = start.elapsed();
     println!("Found {:#?} Attractors using {:#?} bytes of RAM in: {:#?}", clusters.len(), mem::size_of_val(&clusters), duration);
+    
+    // Postprocess
     let area: f64 = std::f64::consts::PI * (radius as f64).powi(2);
     let anomalies = postprocess(points, void_polygons, clusters, &geometry_data, area as f32, dots as u32);
     println!("{:?}", anomalies)
