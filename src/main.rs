@@ -1,5 +1,4 @@
-use geo::{Point, Polygon, LineString, EuclideanDistance, Area, ConvexHull, Centroid, MultiPoint};
-use geo_types::point;
+use geo::{Point, Polygon, LineString, EuclideanDistance, Area};
 use std::collections::{HashMap, HashSet};
 use std::cmp::{min, max};
 use rand::Rng;
@@ -16,7 +15,6 @@ struct Edge(usize, usize);
 #[derive(Debug)]
 struct TriangleData {
     index: usize,
-    vertices: Vec<usize>,
     area: Option<f32>,
     terminal_edge: Option<Edge>
 }
@@ -43,9 +41,6 @@ impl GeometryData {
         let point_a: Point<f32> = points[tri_idx[0]];
         let point_b: Point<f32> = points[tri_idx[1]];
         let point_c: Point<f32> = points[tri_idx[2]];
-    
-        let mut vertices = vec![tri_idx[0], tri_idx[1], tri_idx[2]];
-        vertices.sort_unstable();
 
         // Temporarily store edges_with_lengths for sorting and determining the terminal_edge.
         let mut edges_with_lengths_temp = [
@@ -87,21 +82,11 @@ impl GeometryData {
         if types == 0 || types == 2 {
             self.triangles.push(TriangleData {
                 index,
-                vertices,
                 area,
                 terminal_edge
             });
         }
     }    
-}
-
-#[derive(Debug)]
-struct Anomaly {
-    anomaly_type: usize,
-    hull: Polygon<f32>,
-    centroid: Option<Point<f32>>,
-    area: f32,
-    z_score: f32,
 }
 
 pub fn random_points(center: (f32, f32), radius: f32, num_points: usize) -> Vec<Point<f32>> {
@@ -148,15 +133,6 @@ fn preprocess(points: &[Point<f32>], triangles: &[usize], types: usize) -> Geome
     Arc::try_unwrap(geometry_data).unwrap().into_inner().unwrap()
 }
 
-fn mean_std(dataset: Vec<f32>) -> (f32, f32) {
-    let mean: f32 = dataset.iter().sum::<f32>() / dataset.len() as f32;
-    let std: f32 = (dataset.iter().map(|&length| {
-        let diff = length - mean;
-        diff * diff}
-    ).sum::<f32>() / dataset.len() as f32).sqrt();
-    (mean, std)
-}
-
 fn delfin(
     geometry_data: &GeometryData,
     min_area: f32,
@@ -176,23 +152,6 @@ fn delfin(
     .sorted_by(|a, b| b.1.partial_cmp(&a.1).unwrap()) // Sort in descending order by edge length
     .collect();
 
-    // Calculate areas for triangles that have an area calculated
-    let areas: Vec<f32> = geometry_data.triangles.par_iter()
-        .filter_map(|triangle_data| triangle_data.area)
-        .map(|area| area)
-        .collect();
-
-    // Calculate mean and standard deviation of terminal edges lengths
-    let terminal_edge_lengths: Vec<f32> = geometry_data.triangles.par_iter()
-    .filter_map(|triangle_data| {
-        triangle_data.terminal_edge.and_then(|edge| geometry_data.edge_lengths.get(&edge))
-    })
-    .cloned()
-    .collect();
-
-    let (mean_terminal_edge, std_terminal_edge) = mean_std(terminal_edge_lengths);
-    let (mean_area, std_area) = mean_std(areas);
-
     let mut void_polygons: Vec<HashSet<usize>> = Vec::new();
     let mut processed_triangles: HashSet<usize> = HashSet::new();
 
@@ -202,10 +161,8 @@ fn delfin(
             continue;
         }        
     
-        // Calculate the Z-score for the terminal edge length
-        let distance_z_score: f32 = (terminal_edge_length - mean_terminal_edge) / std_terminal_edge;
-        // Continue if the Z-score is below the minimum distance threshold
-        if distance_z_score < min_distance {
+        // Continue if the terminal edge length is below the minimum distance threshold
+        if terminal_edge_length < min_distance {
             continue;
         }
 
@@ -266,32 +223,11 @@ fn delfin(
             .filter_map(|&idx| geometry_data.triangles.get(idx).and_then(|td| td.area))
             .sum();
         
-        // Calculate the area Z-score if std_area is non-zero to avoid division by zero.
-        let area_z_score: f32 = if std_area != 0.0 {
-            (total_area - mean_area) / std_area
-        } else {
-            -5.0
-        };
-        
-        // Filter based on the area Z-score and the minimum number of triangles.
-        area_z_score >= min_area && poly_set.len() >= 3
+        // Filter based on the area and the minimum number of triangles.
+        total_area >= min_area && poly_set.len() >= 3
     });
 
     return void_polygons;
-    
-    // let void_polygons_vertices: Vec<Vec<Vec<usize>>> = void_polygons.into_iter().map(|triangle_set: HashSet<usize>| {
-    //     triangle_set.into_iter().map(|triangle_index| {
-    //         // Directly retrieve the vertices of the triangle
-    //         geometry_data.triangles[triangle_index].vertices.clone()
-    //     })
-    //     // Collecting into Vec<Vec<usize>>, each inner Vec<usize> represents a triangle's vertices
-    //     .collect::<Vec<Vec<usize>>>()
-    // })
-    // // Collect each void area's vertex sets into the final Vec
-    // .collect::<Vec<Vec<Vec<usize>>>>();
-
-    // // Return the transformed structure
-    // void_polygons_vertices
 
 }
 
@@ -302,8 +238,6 @@ fn dtscan(
 ) -> Vec<Vec<usize>> {
     let mut clusters: Vec<Vec<usize>> = Vec::new();
     let mut visited: HashSet<usize> = HashSet::new();
-    let edge_lengths_values: Vec<f32> = geometry_data.edge_lengths.values().cloned().collect();
-    let (mean_edge_length, std_edge_length) = mean_std(edge_lengths_values);
 
     for (&vertex_idx, neighbors) in &geometry_data.vertex_connections {
         if visited.contains(&vertex_idx) {
@@ -312,8 +246,7 @@ fn dtscan(
         // Check if vertex is a core vertex based on the number of connections and edge lengths
         if neighbors.len() >= min_pts && neighbors.iter().all(|&n| {
             if let Some(&length) = geometry_data.edge_lengths.get(&Edge(min(vertex_idx, n), max(vertex_idx, n))) {
-                let z_score: f32 = (length - mean_edge_length) / std_edge_length;
-                z_score <= max_closeness
+                length <= max_closeness
             } else {
                 false
             }
@@ -332,8 +265,7 @@ fn dtscan(
                 geometry_data.vertex_connections.get(&current_vertex).map(|neighbors: &HashSet<usize>| {
                     for &neighbor in neighbors {
                         if let Some(&length) = geometry_data.edge_lengths.get(&Edge(min(current_vertex, neighbor), max(current_vertex, neighbor))) {
-                            let z_score = (length - mean_edge_length) / std_edge_length;
-                            if z_score <= max_closeness && !visited.contains(&neighbor) {
+                            if length <= max_closeness && !visited.contains(&neighbor) {
                                 to_expand.push(neighbor);
                             }
                         }
@@ -350,77 +282,11 @@ fn dtscan(
     clusters
 }
 
-
-fn improbability_z_score(total_area: f32, total_dots: u32, sub_area: f32, sub_dots: u32) -> f32 {
-    // expected dots for the area under a Complete Spatial Randomness scenario
-    let csr_lambda: f32 = (total_dots as f32) * ( sub_area / total_area);
-    // Z-Score to quantify how improbable a cluster or void is in relation to CSR
-    let z_score: f32 = (sub_dots as f32 - csr_lambda) / csr_lambda.sqrt();
-    z_score
-}
-
-fn postprocess(
-    points: Vec<geo_types::Point<f32>>,
-    voids: Vec<HashSet<usize>>,
-    clusters: Vec<Vec<usize>>,
-    geometry_data: &GeometryData, // Assuming this contains areas for triangles
-    total_area: f32,
-    total_dots: u32,
-) -> Vec<Anomaly> {
-    let mut anomalies: Vec<Anomaly> = Vec::new();
-
-    // Process clusters
-    for cluster in clusters {
-        let cluster_points: Vec<_> = cluster.iter().map(|&idx| points[idx]).collect();
-        let hull_polygon: Polygon<f32> = MultiPoint(cluster_points).convex_hull();
-        let centroid: Option<Point<f32>> = hull_polygon.centroid();
-        let hull_area: f32 = hull_polygon.unsigned_area();
-        let z_score: f32 = improbability_z_score(total_area, total_dots, hull_area, cluster.len() as u32);
-
-        anomalies.push(Anomaly {
-            anomaly_type: 1,
-            hull: hull_polygon,
-            centroid: centroid,
-            area: hull_area,
-            z_score,
-        });
-    }
-
-    // Process voids
-    for void in voids {
-        let mut total_void_area: f32 = 0.0;
-        let mut all_points = Vec::new();
-
-        for &triangle_index in void.iter() {
-            let triangle = &geometry_data.triangles[triangle_index];
-            total_void_area += triangle.area.unwrap_or(0.0);
-            for &vertex_idx in &triangle.vertices {
-                all_points.push(points[vertex_idx]);
-            }
-        }
-
-        let all_points_len: usize = all_points.len();
-        let hull_polygon: Polygon<f32> = MultiPoint(all_points).convex_hull();
-        let centroid: Option<Point<f32>> = hull_polygon.centroid();
-        let z_score: f32 = improbability_z_score(total_area, total_dots, total_void_area, all_points_len as u32);
-
-        anomalies.push(Anomaly {
-            anomaly_type: 2,
-            hull: hull_polygon,
-            centroid: centroid,
-            area: total_void_area,
-            z_score,
-        });
-    }
-
-    anomalies
-}
-
 fn main() {
     let dots: usize = 225424;
     let radius: f32 = 1000.0;
     let mut start = Instant::now();
-    let points: Vec<Point<f32>> = random_points((0.0, 0.0), 1000.0, dots);
+    let points: Vec<Point<f32>> = random_points((0.0, 0.0), radius, dots);
     let mut duration = start.elapsed();
     println!("Generated {:#?} random dots in: {:#?}", dots, duration);
     start = Instant::now();
@@ -428,19 +294,18 @@ fn main() {
     duration = start.elapsed();
     println!("Generated Delaunay triangulation in: {:#?}", duration);
 
-    // Preprocess to create GeometryData with types set to 0 or 1 to ensure vertex_to_triangles is populated
     start = Instant::now();
     let geometry_data: GeometryData = preprocess(&points, &triangles_indices, 0);
     duration = start.elapsed();
     println!("Preprocessed Triangles using {:#?} bytes of RAM in: {:#?}", mem::size_of_val(&geometry_data), duration);
 
     // Define minimum area and minimum distance for delfin function
-    let min_area: f32 = 9.0; // Example threshold for voidness
-    let min_distance: f32 = 3.0; // Example threshold for minimum distance (Z-score)
+    let min_area: f32 = 75.0; // threshold for voidness
+    let min_distance: f32 = 10.0; // threshold for minimum distance
 
     // Parameters for DTSCAN
-    let min_pts: usize = 5; // Example threshold for minimum number of points
-    let max_closeness: f32 = -1.3; // Example threshold for maximum Z-score closeness
+    let min_pts: usize = 5; // threshold for minimum number of points
+    let max_closeness: f32 = 1.5; // threshold for maximum closeness
 
     // Execute delfin function with the generated GeometryData
     start = Instant::now();
@@ -453,9 +318,5 @@ fn main() {
     let clusters: Vec<Vec<usize>> = dtscan(&geometry_data, min_pts, max_closeness);
     duration = start.elapsed();
     println!("Found {:#?} Attractors using {:#?} bytes of RAM in: {:#?}", clusters.len(), mem::size_of_val(&clusters), duration);
-    
-    // Postprocess
-    let area: f64 = std::f64::consts::PI * (radius as f64).powi(2);
-    let anomalies = postprocess(points, void_polygons, clusters, &geometry_data, area as f32, dots as u32);
-    println!("{:?}", anomalies)
+    // println!("{:#?}", (void_polygons, clusters))
 }
