@@ -8,10 +8,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-struct Edge(usize, usize);
+pub struct Edge(usize, usize);
 
 #[derive(Debug)]
-struct TriangleData {
+pub struct TriangleData {
     index: usize,
     area: Option<f32>,
     terminal_edge: Option<Edge>,
