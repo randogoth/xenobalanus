@@ -1,9 +1,11 @@
 [package]
-name = "triturus"
-version = "0.1.0"
+name = "xenobalanus"
+version = "0.1.1"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "xenobalanus"
+crate-type = ["cdylib"]
 
 [dependencies]
 delaunator = "1.0.2"
