@@ -12,18 +12,18 @@ pub struct Edge(usize, usize);
 
 #[derive(Debug)]
 pub struct TriangleData {
-    index: usize,
-    area: Option<f32>,
-    terminal_edge: Option<Edge>,
-    vertices: Vec<usize>
+    pub index: usize,
+    pub area: Option<f32>,
+    pub terminal_edge: Option<Edge>,
+    pub vertices: Vec<usize>
 }
 
 #[derive(Debug)]
 pub struct GeometryData {
-    triangles: Vec<TriangleData>,
-    edge_to_triangles: HashMap<Edge, Vec<usize>>, // Maps an edge to triangle indices
-    edge_lengths: HashMap<Edge, f32>, // Edge lengths
-    vertex_connections: HashMap<usize, HashSet<usize>>, // Direct connections between vertices, for DTSCAN
+    pub triangles: Vec<TriangleData>,
+    pub edge_to_triangles: HashMap<Edge, Vec<usize>>, // Maps an edge to triangle indices
+    pub edge_lengths: HashMap<Edge, f32>, // Edge lengths
+    pub vertex_connections: HashMap<usize, HashSet<usize>>, // Direct connections between vertices, for DTSCAN
 }
 
 impl GeometryData {
