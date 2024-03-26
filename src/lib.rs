@@ -97,7 +97,7 @@ fn distance(x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
 }
 
 pub fn random_points(center: (f32, f32), side_length: f32, num_points: u32) -> Vec<Point<f32>> {
-    // generate random points in a square that is 5% larger than the target circle
+    // generate random points in a square
     let min_x = center.0 - side_length / 2.0;
     let max_x = center.0 + side_length / 2.0;
     let min_y = center.1 - side_length / 2.0;
