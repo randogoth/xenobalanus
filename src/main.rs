@@ -1,13 +1,11 @@
-use geo::{Point, Polygon, LineString, EuclideanDistance, Area};
-use std::collections::{HashMap, HashSet};
-use std::cmp::{min, max};
+use delaunator::{triangulate, Point as DelaunatorPoint};
+use geo::{Point, Polygon, LineString, Area};
+use itertools::Itertools;
 use rand::Rng;
 use rayon::prelude::*;
-use delaunator::{triangulate, Point as DelaunatorPoint};
-use itertools::Itertools;
+use std::cmp::{min, max};
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
-use std::mem;
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 struct Edge(usize, usize);
@@ -16,7 +14,8 @@ struct Edge(usize, usize);
 struct TriangleData {
     index: usize,
     area: Option<f32>,
-    terminal_edge: Option<Edge>
+    terminal_edge: Option<Edge>,
+    vertices: Vec<usize>
 }
 
 #[derive(Debug)]
@@ -42,11 +41,14 @@ impl GeometryData {
         let point_b: Point<f32> = points[tri_idx[1]];
         let point_c: Point<f32> = points[tri_idx[2]];
 
+        let mut vertices = vec![tri_idx[0], tri_idx[1], tri_idx[2]];
+        vertices.sort_unstable();
+
         // Temporarily store edges_with_lengths for sorting and determining the terminal_edge.
         let mut edges_with_lengths_temp = [
-            (Edge(min(tri_idx[0], tri_idx[1]), max(tri_idx[0], tri_idx[1])), point_a.euclidean_distance(&point_b)),
-            (Edge(min(tri_idx[1], tri_idx[2]), max(tri_idx[1], tri_idx[2])), point_b.euclidean_distance(&point_c)),
-            (Edge(min(tri_idx[2], tri_idx[0]), max(tri_idx[2], tri_idx[0])), point_c.euclidean_distance(&point_a)),
+            (Edge(min(tri_idx[0], tri_idx[1]), max(tri_idx[0], tri_idx[1])), distance(point_a.x(), point_a.y(), point_b.x(), point_b.y())),
+            (Edge(min(tri_idx[1], tri_idx[2]), max(tri_idx[1], tri_idx[2])), distance(point_b.x(), point_b.y(), point_c.x(), point_c.y())),
+            (Edge(min(tri_idx[2], tri_idx[0]), max(tri_idx[2], tri_idx[0])), distance(point_c.x(), point_c.y(), point_a.x(), point_a.y())),
         ].to_vec();
         
         // Sort edges by length to ensure the longest edge is identified.
@@ -83,25 +85,28 @@ impl GeometryData {
             self.triangles.push(TriangleData {
                 index,
                 area,
-                terminal_edge
+                terminal_edge,
+                vertices
             });
         }
     }    
 }
 
-pub fn random_points(center: (f32, f32), radius: f32, num_points: usize) -> Vec<Point<f32>> {
-    let mut rng: rand::prelude::ThreadRng = rand::thread_rng();
-    let mut points: Vec<Point<f32>> = Vec::with_capacity(num_points);
+fn distance(x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
+    ((x2 - x1).powi(2) + (y2 - y1).powi(2)).sqrt()
+}
 
+pub fn random_points(center: (f32, f32), side_length: f32, num_points: u32) -> Vec<Point<f32>> {
+    // generate random points in a square that is 5% larger than the target circle
+    let min_x = center.0 - side_length / 2.0;
+    let max_x = center.0 + side_length / 2.0;
+    let min_y = center.1 - side_length / 2.0;
+    let max_y = center.1 + side_length / 2.0;
+    let mut points: Vec<Point<f32>> = Vec::with_capacity(num_points as usize);
+    let mut rng: rand::prelude::ThreadRng = rand::thread_rng();
     for _ in 0..num_points {
-        // Generate a random angle between 0 and 2*PI.
-        let angle: f32 = rng.gen_range(0.0..(2.0 * std::f32::consts::PI));
-        // Generate a random radius to ensure uniform distribution within the circle.
-        let r: f32 = (rng.gen_range(0.0..=1.0) as f32).sqrt() * radius;
-        // Calculate x and y coordinates based on the random angle and radius.
-        let x: f32 = center.0 + r * angle.cos();
-        let y: f32 = center.1 + r * angle.sin();
-        // Add the generated point to the points vector.
+        let x = min_x + rng.gen_range(0.0..=1.0) as f32 * ( max_x - min_x);
+        let y: f32 = min_y + rng.gen_range(0.0..=1.0) as f32 * ( max_y - min_y);
         points.push(Point::new(x, y));
     }
 
@@ -283,40 +288,28 @@ fn dtscan(
 }
 
 fn main() {
-    let dots: usize = 225424;
-    let radius: f32 = 1000.0;
-    let mut start = Instant::now();
-    let points: Vec<Point<f32>> = random_points((0.0, 0.0), radius, dots);
-    let mut duration = start.elapsed();
-    println!("Generated {:#?} random dots in: {:#?}", dots, duration);
-    start = Instant::now();
+    let dots: u32 = 10000;
+    let side_length: f32 = 10000.0;
+    let points: Vec<Point<f32>> = random_points((0.0, 0.0), side_length, dots);
+    println!("Generated {:#?} random dots", dots);
     let triangles_indices: Vec<usize> = delaunay(&points);
-    duration = start.elapsed();
-    println!("Generated Delaunay triangulation in: {:#?}", duration);
+    println!("Generated Delaunay triangulation");
 
-    start = Instant::now();
     let geometry_data: GeometryData = preprocess(&points, &triangles_indices, 0);
-    duration = start.elapsed();
-    println!("Preprocessed Triangles using {:#?} bytes of RAM in: {:#?}", mem::size_of_val(&geometry_data), duration);
 
     // Define minimum area and minimum distance for delfin function
-    let min_area: f32 = 75.0; // threshold for voidness
-    let min_distance: f32 = 10.0; // threshold for minimum distance
+    let min_area: f32 = 1000.0; // threshold for voidness
+    let min_distance: f32 = 200.0; // threshold for minimum distance
 
     // Parameters for DTSCAN
     let min_pts: usize = 5; // threshold for minimum number of points
-    let max_closeness: f32 = 1.5; // threshold for maximum closeness
+    let max_closeness: f32 = 100.5; // threshold for maximum closeness
 
     // Execute delfin function with the generated GeometryData
-    start = Instant::now();
     let void_polygons: Vec<HashSet<usize>> = delfin(&geometry_data, min_area, min_distance);
-    duration = start.elapsed();
-    println!("Found {:#?} Voids using {:#?} bytes of RAM in: {:#?}", void_polygons.len(), mem::size_of_val(&void_polygons), duration);
+    println!("Found {:#?} Voids", void_polygons.len());
 
     // Execute DTSCAN with the prepared data
-    start = Instant::now();
     let clusters: Vec<Vec<usize>> = dtscan(&geometry_data, min_pts, max_closeness);
-    duration = start.elapsed();
-    println!("Found {:#?} Attractors using {:#?} bytes of RAM in: {:#?}", clusters.len(), mem::size_of_val(&clusters), duration);
-    // println!("{:#?}", (void_polygons, clusters))
+    println!("Found {:#?} Attractors", clusters.len());
 }
