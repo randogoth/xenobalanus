@@ -5,7 +5,6 @@ edition = "2021"
 
 [lib]
 name = "xenobalanus"
-crate-type = ["cdylib"]
 
 [dependencies]
 delaunator = "1.0.2"

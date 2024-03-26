@@ -126,7 +126,7 @@ pub fn delaunay(points: &Vec<Point<f32>>) -> Vec<usize> {
     result.triangles
 }
 
-fn preprocess(points: &[Point<f32>], triangles: &[usize], types: usize) -> GeometryData {
+pub fn preprocess(points: &[Point<f32>], triangles: &[usize], types: usize) -> GeometryData {
     let geometry_data = Arc::new(Mutex::new(GeometryData::new()));
 
     triangles.par_chunks(3).enumerate().for_each(|(index, tri_idx)| {
@@ -138,7 +138,7 @@ fn preprocess(points: &[Point<f32>], triangles: &[usize], types: usize) -> Geome
     Arc::try_unwrap(geometry_data).unwrap().into_inner().unwrap()
 }
 
-fn delfin(
+pub fn delfin(
     geometry_data: &GeometryData,
     min_area: f32,
     min_distance: f32,
@@ -236,7 +236,7 @@ fn delfin(
 
 }
 
-fn dtscan(
+pub fn dtscan(
     geometry_data: &GeometryData,
     min_pts: usize,
     max_closeness: f32,
