@@ -19,7 +19,7 @@ struct TriangleData {
 }
 
 #[derive(Debug)]
-struct GeometryData {
+pub struct GeometryData {
     triangles: Vec<TriangleData>,
     edge_to_triangles: HashMap<Edge, Vec<usize>>, // Maps an edge to triangle indices
     edge_lengths: HashMap<Edge, f32>, // Edge lengths
