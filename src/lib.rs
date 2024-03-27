@@ -18,7 +18,7 @@ fn distance(a: Point, b: Point) -> f32 {
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct Edge(usize, usize);
 
-#[derive(Debug)]
+#[derive(Debug, Default, Clone)]
 pub struct TriangleData {
     pub index: usize,
     pub area: Option<f32>,
@@ -113,12 +113,12 @@ impl GeometryData {
         }
     
         if types == 0 || types == 2 {
-            self.triangles.push(TriangleData {
+            self.triangles[index] = TriangleData {
                 index,
                 area,
                 terminal_edge,
                 vertices
-            });
+            };
         }
     } 
           
@@ -127,7 +127,7 @@ impl GeometryData {
 pub struct Xenobalanus {
     geometry_data: GeometryData,
     points: Vec<Point>,
-    triangles: Vec<usize>,
+    triangulation: Vec<usize>,
 }
 
 impl Xenobalanus {
@@ -135,7 +135,7 @@ impl Xenobalanus {
         Xenobalanus {
             geometry_data: GeometryData::new(),
             points: Vec::new(),
-            triangles: Vec::new(),
+            triangulation: Vec::new(),
         }
     }
 
@@ -152,17 +152,17 @@ impl Xenobalanus {
     }
 
     pub fn triangles(&self) -> Vec<usize> {
-        self.triangles.clone()
+        self.triangulation.clone()
     }
 
     pub fn triangle_vertices(&self) -> Vec<Vec<usize>> {
-        self.triangles.chunks(3).map(|chunk| {
+        self.triangulation.chunks(3).map(|chunk| {
             chunk.iter().map(|&index| index).collect()
         }).collect()
     }
 
     pub fn triangle_coordinates(&self) -> Vec<Vec<Vec<f32>>> {
-        self.triangles.chunks(3).map(|chunk| {
+        self.triangulation.chunks(3).map(|chunk| {
             chunk.iter().map(|&index| {
                 let point = &self.points[index];
                 vec![point.x, point.y] // Each point is represented by a Vec<f32> of its coordinates
@@ -193,13 +193,20 @@ impl Xenobalanus {
 
     // Perform Delaunay triangulation
     let result: delaunator::Triangulation = triangulate(&delaunator_points);
-    self.triangles = result.triangles
+    self.triangulation = result.triangles
     }
 
     pub fn preprocess(&mut self, types: usize) {
-        let geometry_data = Arc::new(Mutex::new(GeometryData::new()));
 
-        self.triangles.par_chunks(3).enumerate().for_each(|(index, tri_idx)| {
+        let num_triangles = self.triangulation.len() / 3;
+    
+        // Initialize GeometryData with the correct size for triangles vector
+        let mut initial_geometry_data = GeometryData::new();
+        initial_geometry_data.triangles.resize(num_triangles, TriangleData::default());
+
+        let geometry_data = Arc::new(Mutex::new(initial_geometry_data));
+
+        self.triangulation.par_chunks(3).enumerate().for_each(|(index, tri_idx)| {
             let gd = geometry_data.clone(); // Clone Arc for use in each thread
             gd.lock().unwrap().add_triangle(index, &self.points, tri_idx, types);
         });
@@ -237,11 +244,12 @@ impl Xenobalanus {
             
             // Seed the initial set and edges to expand
             current_set.insert(triangle_index);
-            // processed_triangles.insert(triangle_index);
+            processed_triangles.insert(triangle_index);
 
             // Get all edges of the current triangle
             if let Some(edges) = self.geometry_data.triangles.get(triangle_index).map(|t| t.get_edges()) {
                 for edge in edges {
+                    
                     // Add all edges to check for neighbors to expand
                     edges_to_expand.insert(edge);
                 }
@@ -252,10 +260,10 @@ impl Xenobalanus {
                 edges_to_expand.remove(&edge);
     
                 // Get neighbor triangles for this edge
-                if let Some(triangles) = self.geometry_data.edge_to_triangles.get(&edge) {
+                if let Some(neighbor_triangles) = self.geometry_data.edge_to_triangles.get(&edge) {
 
                     // Iterate through neighbors
-                    for &neighbor_index in triangles {
+                    for &neighbor_index in neighbor_triangles {
 
                         // Skip if already processed
                         if processed_triangles.contains(&neighbor_index) {
@@ -288,7 +296,7 @@ impl Xenobalanus {
                 void_polygons.push(current_set);
             }
         }
-        println!("{:#?}", void_polygons);
+        
         // Retain only those sets that meet the minimum area criteria
         void_polygons.retain(|set| {
             set.iter()
