@@ -1,11 +1,19 @@
 use delaunator::{triangulate, Point as DelaunatorPoint};
-use geo::{Point, Polygon, LineString, Area};
-use itertools::Itertools;
 use rand::Rng;
 use rayon::prelude::*;
 use std::cmp::{min, max};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+
+#[derive(Debug, Clone, Copy)]
+pub struct Point {
+    x: f32,
+    y: f32
+}
+
+fn distance(a: Point, b: Point) -> f32 {
+    ( (b.x - a.x).powi(2) + (b.y - a.y).powi(2) ).sqrt()
+}
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct Edge(usize, usize);
@@ -16,6 +24,24 @@ pub struct TriangleData {
     pub area: Option<f32>,
     pub terminal_edge: Option<Edge>,
     pub vertices: Vec<usize>
+}
+
+impl TriangleData {
+    pub fn get_edges(&self) -> Vec<Edge> {
+        let mut edges = Vec::new();
+        if self.vertices.len() >= 3 {
+            for i in 0..self.vertices.len() {
+                let v1 = self.vertices[i];
+                let v2 = if i + 1 < self.vertices.len() {
+                    self.vertices[i + 1]
+                } else {
+                    self.vertices[0]
+                };
+                edges.push(if v1 < v2 { Edge(v1, v2) } else { Edge(v2, v1) });
+            }
+        }
+        edges
+    }
 }
 
 #[derive(Debug)]
@@ -35,35 +61,41 @@ impl GeometryData {
             vertex_connections: HashMap::new(), // Adjusted for DTSCAN
         }
     }
-    fn add_triangle(&mut self, index: usize, points: &[Point<f32>], tri_idx: &[usize], types: usize) {
-        let point_a: Point<f32> = points[tri_idx[0]];
-        let point_b: Point<f32> = points[tri_idx[1]];
-        let point_c: Point<f32> = points[tri_idx[2]];
+    fn add_triangle(&mut self, index: usize, points: &[Point], tri_idx: &[usize], types: usize) {
+
+        let point_a: Point = points[tri_idx[0]];
+        let point_b: Point = points[tri_idx[1]];
+        let point_c: Point = points[tri_idx[2]];
 
         let mut vertices = vec![tri_idx[0], tri_idx[1], tri_idx[2]];
         vertices.sort_unstable();
 
         // Temporarily store edges_with_lengths for sorting and determining the terminal_edge.
         let mut edges_with_lengths_temp = [
-            (Edge(min(tri_idx[0], tri_idx[1]), max(tri_idx[0], tri_idx[1])), distance(point_a.x(), point_a.y(), point_b.x(), point_b.y())),
-            (Edge(min(tri_idx[1], tri_idx[2]), max(tri_idx[1], tri_idx[2])), distance(point_b.x(), point_b.y(), point_c.x(), point_c.y())),
-            (Edge(min(tri_idx[2], tri_idx[0]), max(tri_idx[2], tri_idx[0])), distance(point_c.x(), point_c.y(), point_a.x(), point_a.y())),
+            (Edge(min(tri_idx[0], tri_idx[1]), max(tri_idx[0], tri_idx[1])), distance(point_a, point_b)),
+            (Edge(min(tri_idx[1], tri_idx[2]), max(tri_idx[1], tri_idx[2])), distance(point_b, point_c)),
+            (Edge(min(tri_idx[2], tri_idx[0]), max(tri_idx[2], tri_idx[0])), distance(point_c, point_a)),
         ].to_vec();
         
         // Sort edges by length to ensure the longest edge is identified.
         edges_with_lengths_temp.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        
         let terminal_edge: Option<Edge> = edges_with_lengths_temp.first().map(|(edge, _)| *edge);
-
+        
         let area: Option<f32> = if types == 0 || types == 2 {
-            Some(Polygon::new(LineString::from(vec![
-                (point_a.x(), point_a.y()),
-                (point_b.x(), point_b.y()),
-                (point_c.x(), point_c.y()),
-                (point_a.x(), point_a.y()),
-            ]), vec![]).unsigned_area())
+            let x1 = point_a.x;
+            let y1 = point_a.y;
+            let x2 = point_b.x;
+            let y2 = point_b.y;
+            let x3 = point_c.x;
+            let y3 = point_c.y;
+        
+            // Calculate the area using the shoelace formula
+            let calculated_area = (x1*(y2-y3) + x2*(y3-y1) + x3*(y1-y2)).abs() / 2.0;
+            Some(calculated_area)
         } else {
             None
-        };
+        };        
     
         if types == 0 || types == 1 {
             for &(edge, length) in &edges_with_lengths_temp {
@@ -92,13 +124,9 @@ impl GeometryData {
           
 }
 
-fn distance(x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
-    ((x2 - x1).powi(2) + (y2 - y1).powi(2)).sqrt()
-}
-
 pub struct Xenobalanus {
     geometry_data: GeometryData,
-    points: Vec<Point<f32>>,
+    points: Vec<Point>,
     triangles: Vec<usize>,
 }
 
@@ -113,13 +141,13 @@ impl Xenobalanus {
 
     pub fn points(&self) -> Vec<Vec<f32>> {
         self.points.iter()
-            .map(|point| vec![point.x(), point.y()])
+            .map(|point| vec![point.x, point.y])
             .collect()
     }
 
     pub fn points_flat(&self) -> Vec<f32> {
         self.points.iter()
-            .flat_map(|point| vec![point.x(), point.y()])
+            .flat_map(|point| vec![point.x, point.y])
             .collect()
     }
 
@@ -133,13 +161,13 @@ impl Xenobalanus {
         }).collect()
     }
 
-    pub fn triangles_coordinates(&self) -> Vec<Vec<f32>> {
+    pub fn triangle_coordinates(&self) -> Vec<Vec<Vec<f32>>> {
         self.triangles.chunks(3).map(|chunk| {
-            chunk.iter().flat_map(|&index| {
+            chunk.iter().map(|&index| {
                 let point = &self.points[index];
-                vec![point.x(), point.y()]
-            }).collect()
-        }).collect()
+                vec![point.x, point.y] // Each point is represented by a Vec<f32> of its coordinates
+            }).collect() // Collects points of a triangle into Vec<Vec<f32>>
+        }).collect() // Collects all triangles into Vec<Vec<Vec<f32>>>
     }
 
     // Additional methods moved into GeometryProcessor, operating on self.geometry_data
@@ -153,14 +181,14 @@ impl Xenobalanus {
         for _ in 0..num_points {
             let x = min_x + rng.gen_range(0.0..=1.0) as f32 * ( max_x - min_x);
             let y: f32 = min_y + rng.gen_range(0.0..=1.0) as f32 * ( max_y - min_y);
-            self.points.push(Point::new(x, y));
+            self.points.push(Point {x, y});
         }
     }
 
     pub fn delaunay(&mut self) {
-        // Convert geo::Point<f32> to delaunator::Point for triangulation
+        // Convert geo::Point to delaunator::Point for triangulation
         let delaunator_points: Vec<DelaunatorPoint> = self.points.iter()
-        .map(|point: &Point<f32>| DelaunatorPoint { x: point.x() as f64, y: point.y() as f64 })
+        .map(|point: &Point| DelaunatorPoint { x: point.x as f64, y: point.y as f64 })
         .collect();
 
     // Perform Delaunay triangulation
@@ -173,7 +201,6 @@ impl Xenobalanus {
 
         self.triangles.par_chunks(3).enumerate().for_each(|(index, tri_idx)| {
             let gd = geometry_data.clone(); // Clone Arc for use in each thread
-
             gd.lock().unwrap().add_triangle(index, &self.points, tri_idx, types);
         });
 
@@ -185,98 +212,92 @@ impl Xenobalanus {
         min_area: f32,
         min_distance: f32,
     ) -> Vec<HashSet<usize>> {
-    
-        // Sort all triangles by the longest terminal edge
-        let triangles_sorted: Vec<(usize, f32)> = self.geometry_data.triangles.iter()
-        .filter_map(|triangle_data| {
-            // Only consider triangles with a terminal edge
-            triangle_data.terminal_edge.map(|terminal_edge| {
-                // Retrieve the length of the terminal edge if it exists
-                self.geometry_data.edge_lengths.get(&terminal_edge)
-                    .map(|&length| (triangle_data.index, length))
-            }).flatten()
-        })
-        .sorted_by(|a, b| b.1.partial_cmp(&a.1).unwrap()) // Sort in descending order by edge length
-        .collect();
-    
         let mut void_polygons: Vec<HashSet<usize>> = Vec::new();
         let mut processed_triangles: HashSet<usize> = HashSet::new();
     
-        for &(triangle_index, terminal_edge_length) in &triangles_sorted {
-            // Skip if this triangle has already been processed
+        // Create a sorted list of triangles by their terminal edge length that meet the minimum distance criteria.
+        let mut triangles_sorted: Vec<(usize, f32)> = self.geometry_data.triangles.iter()
+            .filter_map(|t| t.terminal_edge.and_then(|e| self.geometry_data.edge_lengths.get(&e).map(|&l| (t.index, l))))
+            .filter(|&(_, length)| length >= min_distance)
+            .collect();
+    
+        // Sort by longest edge first
+        triangles_sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    
+        // Iterate through triangles starting from the one with the longest terminal edge
+        for (triangle_index, _) in triangles_sorted {
+
+            // Skip if already processed
             if processed_triangles.contains(&triangle_index) {
                 continue;
-            }        
-        
-            // Continue if the terminal edge length is below the minimum distance threshold
-            if terminal_edge_length < min_distance {
-                continue;
+            }
+            
+            let mut edges_to_expand: HashSet<Edge> = HashSet::new();
+            let mut current_set: HashSet<usize> = HashSet::new();
+            
+            // Seed the initial set and edges to expand
+            current_set.insert(triangle_index);
+            // processed_triangles.insert(triangle_index);
+
+            // Get all edges of the current triangle
+            if let Some(edges) = self.geometry_data.triangles.get(triangle_index).map(|t| t.get_edges()) {
+                for edge in edges {
+                    // Add all edges to check for neighbors to expand
+                    edges_to_expand.insert(edge);
+                }
             }
     
-            // Retrieve triangles that share the terminal edge, continue if less than 2 triangles share it
-            let triangle_data: &TriangleData = &self.geometry_data.triangles[triangle_index];
-            if let Some(terminal_edge) = triangle_data.terminal_edge {
-                if let Some(connected_triangles) = self.geometry_data.edge_to_triangles.get(&terminal_edge) {
-                    // Proceed only if there are 2 or more triangles sharing the terminal edge
-                    if connected_triangles.len() < 2 {
-                        continue;
-                    }
-        
-                    // Initialize the set with the current triangle and triangles directly connected via their terminal edge
-                    let mut triangle_set: HashSet<usize> = connected_triangles.iter().cloned().collect();
-                    triangle_set.insert(triangle_index);
-                    processed_triangles.extend(&triangle_set);
-            
-                    // Dynamically expand the set based on the terminal edge sharing criterion
-                    let mut triangles_to_expand: HashSet<usize> = triangle_set.clone();
-                    while let Some(current_idx) = triangles_to_expand.iter().next().cloned() {
-                        // Remove the current triangle index from the set to avoid reprocessing
-                        triangles_to_expand.remove(&current_idx);
-                    
-                        // Iterate over each triangle that shares a terminal edge
-                        for &neighbor_idx in connected_triangles {
-                            // Skip if this triangle has already been considered or processed
-                            if triangle_set.contains(&neighbor_idx) || processed_triangles.contains(&neighbor_idx) {
-                                continue;
-                            }
-                    
-                            // Safely access the neighbor triangle's data using its index
-                            if let Some(neighbor_data) = self.geometry_data.triangles.get(neighbor_idx) {
-                                // Check if the neighbor shares the same terminal edge
-                                // Directly compare the terminal edges as they are both Option<Edge>
-                                if neighbor_data.terminal_edge == Some(terminal_edge) {
-                                    // If they share the same terminal edge, include the neighbor in the current void polygon set
-                                    triangle_set.insert(neighbor_idx);
-                                    processed_triangles.insert(neighbor_idx);
-                                    triangles_to_expand.insert(neighbor_idx);
+            // Expand the set
+            while let Some(edge) = edges_to_expand.iter().next().cloned() {
+                edges_to_expand.remove(&edge);
+    
+                // Get neighbor triangles for this edge
+                if let Some(triangles) = self.geometry_data.edge_to_triangles.get(&edge) {
+
+                    // Iterate through neighbors
+                    for &neighbor_index in triangles {
+
+                        // Skip if already processed
+                        if processed_triangles.contains(&neighbor_index) {
+                            continue;
+                        }
+
+                        // Get neighbor triangle
+                        if let Some(neighbor_triangle) = self.geometry_data.triangles.get(neighbor_index) {
+                            
+                            // Get neighbor triangle's terminal edge
+                            if let Some(neighbor_edge) = neighbor_triangle.terminal_edge {
+
+                                // If neighbor's terminal edge is edge of current triangle, add to set
+                                if neighbor_edge == edge {
+                                    current_set.insert(neighbor_index);
+                                    processed_triangles.insert(triangle_index);
+                                    processed_triangles.insert(neighbor_index);
+
+                                    // Add new neighbor edges to search
+                                    neighbor_triangle.get_edges().into_iter().for_each(|e| { edges_to_expand.insert(e); });
                                 }
                             }
                         }
                     }
-        
-                    // Add the expanded set to void polygons
-                    void_polygons.push(triangle_set);
-                } else {
-                    // If no connected triangles are found for the terminal edge, simply skip to the next triangle
-                    continue;
                 }
             }
-        }
-    
-        // Filter out void polygon sets
-        void_polygons.retain(|poly_set: &HashSet<usize>| {
-            // Calculate the total area of the polygon set by summing the areas of the triangles it contains.
-            let total_area: f32 = poly_set.iter()
-                .filter_map(|&idx| self.geometry_data.triangles.get(idx).and_then(|td| td.area))
-                .sum();
             
-            // Filter based on the area and the minimum number of triangles.
-            total_area >= min_area && poly_set.len() >= 3
+            // Add the expanded set if more than one triangle
+            if current_set.len() > 1 {
+                void_polygons.push(current_set);
+            }
+        }
+        println!("{:#?}", void_polygons);
+        // Retain only those sets that meet the minimum area criteria
+        void_polygons.retain(|set| {
+            set.iter()
+               .filter_map(|&i| self.geometry_data.triangles[i].area)
+               .sum::<f32>() >= min_area
         });
     
-        return void_polygons;
-    
-    }
+        void_polygons
+    }    
 
     pub fn dtscan(
         &self,
