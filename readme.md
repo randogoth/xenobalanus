@@ -14,7 +14,7 @@ DTSCAN was developed by Kim, Jongwon, and Jeongho Cho. "[Delaunay triangulation-
 
 ## Functions
 
-The combined Xenobalanus implementation is comprised of several key functions:
+The Xenobalanus class is comprised of several key methods:
 
 - `random_points`: Generates uniformly distributed random points for testing.
 - `delaunay`: A wrapper of the [Delaunator crate](https://docs.rs/delaunator/latest/delaunator/). Performs Delaunay Triangulation on a given set of points to find their triangular connections.
@@ -29,31 +29,33 @@ Below is an example code snippet that demonstrates the workflow. This example ge
 ```rust
 use geo::Point;
 use std::collections::{HashSet};
-use xenobalanus::{delaunay, random_points, preprocess, dtscan, delfin, GeometryData};
+use xenobalanus;
 
 fn main() {
     // Define test area and random points
     let dots: u32 = 10000;
     let side_length: f32 = 10000.0;
-    let points: Vec<Point<f32>> = random_points((0.0, 0.0), side_length, dots);
+    let mut xeno = Xenobalanus::new();
+    xeno.random_points((0.0, 0.0), side_length, dots);
     println!("Generated {:#?} random dots", dots);
 
     // Run Delaunay triangulation
-    let triangles_indices: Vec<usize> = delaunay(&points);
+    xeno.delaunay();
     println!("Generated Delaunay triangulation");
 
     // Pre-process triangles
-    let geometry_data: GeometryData = preprocess(&points, &triangles_indices, 0);
+    xeno.preprocess(0);
 
     // Execute delfin function with the generated GeometryData
     let min_area: f32 = 1000.0; // threshold for voidness
     let min_distance: f32 = 200.0; // threshold for minimum distance
-    let void_polygons: Vec<HashSet<usize>> = delfin(&geometry_data, min_area, min_distance);
+    let void_polygons: Vec<HashSet<usize>> = xeno.delfin(min_area, min_distance);
     println!("Found {:#?} Voids", void_polygons.len());
 
     // Execute DTSCAN with the prepared data
     let min_pts: usize = 5; // threshold for minimum number of points
     let max_closeness: f32 = 100.5; // threshold for maximum closeness
-    let clusters: Vec<Vec<usize>> = dtscan(&geometry_data, min_pts, max_closeness);
+    let clusters: Vec<Vec<usize>> = xeno.dtscan(min_pts, max_closeness);
     println!("Found {:#?} Attractors", clusters.len());
 }
+```
