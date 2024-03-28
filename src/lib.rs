@@ -111,6 +111,11 @@ impl GeometryData {
                 self.edge_to_triangles.entry(edge).or_default().push(index);
             }
         }
+
+        // Dynamically resize the struct in memory to accomodate the index
+        if index >= self.triangles.len() {
+            self.triangles.resize(index + 1, TriangleData::default());
+        }
     
         if types == 0 || types == 2 {
             self.triangles[index] = TriangleData {
@@ -197,21 +202,17 @@ impl Xenobalanus {
     }
 
     pub fn preprocess(&mut self, types: usize) {
-
-        let num_triangles = self.triangulation.len() / 3;
+        let geometry_data = Arc::new(Mutex::new(GeometryData::new()));
     
-        // Initialize GeometryData with the correct size for triangles vector
-        let mut initial_geometry_data = GeometryData::new();
-        initial_geometry_data.triangles.resize(num_triangles, TriangleData::default());
-
-        let geometry_data = Arc::new(Mutex::new(initial_geometry_data));
-
         self.triangulation.par_chunks(3).enumerate().for_each(|(index, tri_idx)| {
-            let gd = geometry_data.clone(); // Clone Arc for use in each thread
-            gd.lock().unwrap().add_triangle(index, &self.points, tri_idx, types);
+            let gd = geometry_data.clone(); // Clone Arc for use in each thread, not the data itself
+    
+            // Perform locked update
+            let mut gd_lock = gd.lock().unwrap();
+            gd_lock.add_triangle(index, &self.points, tri_idx, types);
         });
-
-        self.geometry_data = Arc::try_unwrap(geometry_data).unwrap().into_inner().unwrap()
+    
+        self.geometry_data = Arc::try_unwrap(geometry_data).unwrap().into_inner().unwrap();
     }
 
     pub fn delfin(
