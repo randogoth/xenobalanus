@@ -1,4 +1,5 @@
 use delaunator::{triangulate, Point as DelaunatorPoint};
+use geo::Point as GeoPoint;
 use rand::Rng;
 use rayon::prelude::*;
 use std::cmp::{min, max};
@@ -7,12 +8,33 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Point {
-    x: f32,
-    y: f32
+    pub x: f32,
+    pub y: f32
 }
 
-fn distance(a: Point, b: Point) -> f32 {
-    ( (b.x - a.x).powi(2) + (b.y - a.y).powi(2) ).sqrt()
+impl Point {
+
+    pub fn new(x: f32, y: f32) -> Self {
+        Point{ x: x, y: y }
+    }
+
+    pub fn from_geo32(point: GeoPoint<f32>) -> Self {
+        Point{ x: point.x(), y: point.y() }
+    }
+
+    pub fn from_geo64(point: GeoPoint<f64>) -> Self {
+        Point{ x: point.x() as f32, y: point.y() as f32 }
+    }
+
+    pub fn distance(&self,point: Point) -> f32 {
+        ( (point.x - &self.x).powi(2) + (point.y - &self.y).powi(2) ).sqrt()
+    }
+
+    pub fn bearing(&self, point: Point) -> f32 {
+        let delta_x = point.x - self.x;
+        let delta_y = point.y - self.y;
+        delta_y.atan2(delta_x).to_degrees().rem_euclid(360.0)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
@@ -72,9 +94,9 @@ impl GeometryData {
 
         // Temporarily store edges_with_lengths for sorting and determining the terminal_edge.
         let mut edges_with_lengths_temp = [
-            (Edge(min(tri_idx[0], tri_idx[1]), max(tri_idx[0], tri_idx[1])), distance(point_a, point_b)),
-            (Edge(min(tri_idx[1], tri_idx[2]), max(tri_idx[1], tri_idx[2])), distance(point_b, point_c)),
-            (Edge(min(tri_idx[2], tri_idx[0]), max(tri_idx[2], tri_idx[0])), distance(point_c, point_a)),
+            (Edge(min(tri_idx[0], tri_idx[1]), max(tri_idx[0], tri_idx[1])), point_a.distance(point_b)),
+            (Edge(min(tri_idx[1], tri_idx[2]), max(tri_idx[1], tri_idx[2])), point_b.distance(point_c)),
+            (Edge(min(tri_idx[2], tri_idx[0]), max(tri_idx[2], tri_idx[0])), point_c.distance(point_a)),
         ].to_vec();
         
         // Sort edges by length to ensure the longest edge is identified.
@@ -144,6 +166,10 @@ impl Xenobalanus {
         }
     }
 
+    pub fn point(&self, index: usize) -> Point {
+        self.points[index]
+    }
+
     pub fn points(&self) -> Vec<Vec<f32>> {
         self.points.iter()
             .map(|point| vec![point.x, point.y])
@@ -156,7 +182,19 @@ impl Xenobalanus {
             .collect()
     }
 
-    pub fn triangles(&self) -> Vec<usize> {
+    pub fn set_points(&mut self, points: Vec<Point>) {
+        self.points = points
+    }
+
+    pub fn triangle(&self, index: usize) -> TriangleData {
+        self.geometry_data.triangles[index].clone()
+    }
+
+    pub fn triangle_data(&self) -> &Vec<TriangleData> {
+        &self.geometry_data.triangles
+    }
+
+    pub fn triangles_flat(&self) -> Vec<usize> {
         self.triangulation.clone()
     }
 
@@ -175,6 +213,10 @@ impl Xenobalanus {
         }).collect() // Collects all triangles into Vec<Vec<Vec<f32>>>
     }
 
+    pub fn set_triangles(&mut self, vertices: Vec<usize>) {
+        self.triangulation = vertices
+    }
+
     // Additional methods moved into GeometryProcessor, operating on self.geometry_data
     pub fn random_points(&mut self, center: (f32, f32), side_length: f32, num_points: u32) {
         // generate random points in a square
@@ -188,6 +230,10 @@ impl Xenobalanus {
             let y: f32 = min_y + rng.gen_range(0.0..=1.0) as f32 * ( max_y - min_y);
             self.points.push(Point {x, y});
         }
+    }
+
+    pub fn edge_lengths(&self) -> &HashMap<Edge, f32> {
+        &self.geometry_data.edge_lengths
     }
 
     pub fn delaunay(&mut self) {
