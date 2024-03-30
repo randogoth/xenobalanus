@@ -1,5 +1,5 @@
 use delaunator::{triangulate, Point as DelaunatorPoint};
-use geo::Point as GeoPoint;
+use geo::{Point as GeoPoint, Coord};
 use rand::Rng;
 use rayon::prelude::*;
 use std::cmp::{min, max};
@@ -34,6 +34,12 @@ impl Point {
         let delta_x = point.x - self.x;
         let delta_y = point.y - self.y;
         delta_y.atan2(delta_x).to_degrees().rem_euclid(360.0)
+    }
+}
+
+impl From<Point> for Coord<f32> {
+    fn from(point: Point) -> Self {
+        Coord { x: point.x, y: point.y }
     }
 }
 
@@ -170,9 +176,9 @@ impl Xenobalanus {
         self.points[index]
     }
 
-    pub fn points(&self) -> Vec<Vec<f32>> {
+    pub fn points(&self) -> Vec<(f32, f32)> {
         self.points.iter()
-            .map(|point| vec![point.x, point.y])
+            .map(|point| (point.x, point.y))
             .collect()
     }
 
@@ -204,11 +210,11 @@ impl Xenobalanus {
         }).collect()
     }
 
-    pub fn triangle_coordinates(&self) -> Vec<Vec<Vec<f32>>> {
+    pub fn triangle_coordinates(&self) -> Vec<Vec<(f32, f32)>> {
         self.triangulation.chunks(3).map(|chunk| {
             chunk.iter().map(|&index| {
                 let point = &self.points[index];
-                vec![point.x, point.y] // Each point is represented by a Vec<f32> of its coordinates
+                (point.x, point.y) // Each point is represented by a Vec<f32> of its coordinates
             }).collect() // Collects points of a triangle into Vec<Vec<f32>>
         }).collect() // Collects all triangles into Vec<Vec<Vec<f32>>>
     }
@@ -403,5 +409,112 @@ impl Xenobalanus {
         }
     
         clusters
+    }
+}
+
+impl Xenobalanus {
+
+    pub fn delaunay_sub(&mut self, vertices: Vec<usize>) -> Vec<usize> {
+        let delaunator_points: Vec<DelaunatorPoint> = vertices.iter()
+        .map(|vertex| DelaunatorPoint { x: self.point(*vertex).x as f64, y: self.point(*vertex).y as f64 })
+        .collect();
+
+        // Perform Delaunay triangulation
+        let result: delaunator::Triangulation = triangulate(&delaunator_points);
+        result.triangles
+
+    }
+
+    /// Calculates the concave hull for a subset of vertices indicated by their indices, based on the alpha parameter.
+    pub fn concave_hull(&mut self, vertex_indices: Vec<usize>, alpha: f32) -> Result<Vec<Point>, &'static str> {
+        // Perform Delaunay triangulation on the subset of vertices.
+        let triangulation_indices = self.delaunay_sub(vertex_indices.clone());
+
+        if triangulation_indices.is_empty() {
+            return Err("Delaunay triangulation failed or no triangles were formed.");
+        }
+
+        // Initialize edge counter to identify unique edges
+        let mut edge_counter: HashMap<(usize, usize), usize> = HashMap::new();
+
+        // Iterate through triangles to populate edge counter
+        for chunk in triangulation_indices.chunks(3) {
+            if chunk.len() == 3 {
+                let global_indices = [vertex_indices[chunk[0]], vertex_indices[chunk[1]], vertex_indices[chunk[2]]];
+                
+                // Process each edge in the triangle
+                for i in 0..3 {
+                    let start_idx = global_indices[i];
+                    let end_idx = global_indices[(i + 1) % 3];
+                    let edge = (start_idx.min(end_idx), start_idx.max(end_idx)); // Ensure consistent ordering
+
+                    // Apply alpha filter based on the distance between points
+                    let distance = self.point(start_idx).distance(self.point(end_idx));
+                    if distance < alpha {
+                        *edge_counter.entry(edge).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+
+        // Extract edges that appear exactly once and are within the alpha radius
+        let hull_edge_indices: Vec<(usize, usize)> = edge_counter.into_iter()
+            .filter_map(|(edge, count)| if count == 1 { Some(edge) } else { None })
+            .collect();
+
+        if hull_edge_indices.is_empty() {
+            return Err("No edges meet the criteria for the concave hull.");
+        }
+
+        // Order the hull edge indices to form a continuous path
+        let ordered_indices = self.order_hull_edges(hull_edge_indices)?;
+
+        // Convert ordered indices to points
+        let ordered_points = ordered_indices.iter().map(|&idx| self.point(idx)).collect();
+
+        Ok(ordered_points)
+    }
+
+    /// Attempts to order hull edges into a continuous path.
+    pub fn order_hull_edges(&self, hull_edge_indices: Vec<(usize, usize)>) -> Result<Vec<usize>, &'static str> {
+        if hull_edge_indices.is_empty() {
+            return Err("No edges provided.");
+        }
+
+        let mut visited: HashSet<usize> = HashSet::new();
+        let mut ordered_point_indices: Vec<usize> = Vec::new();
+
+        // Initialize with the first edge's indices
+        let (start_idx, mut current_idx) = hull_edge_indices[0];
+        ordered_point_indices.push(start_idx);
+        visited.insert(start_idx);
+
+        while visited.len() < hull_edge_indices.len() + 1 {
+            let mut found_next = false;
+
+            for &(p1_idx, p2_idx) in &hull_edge_indices {
+                if p1_idx == current_idx && !visited.contains(&p2_idx) {
+                    ordered_point_indices.push(p2_idx);
+                    visited.insert(p2_idx);
+                    current_idx = p2_idx;
+                    found_next = true;
+                    break;
+                } else if p2_idx == current_idx && !visited.contains(&p1_idx) {
+                    ordered_point_indices.push(p1_idx);
+                    visited.insert(p1_idx);
+                    current_idx = p1_idx;
+                    found_next = true;
+                    break;
+                }
+            }
+
+            if !found_next {
+                return Err("Failed to order all concave hull vertices into a continuous path.");
+            }
+        }
+
+        // Convert indices to Points
+        Ok(hull_edge_indices.iter().map(|&(start_idx, _)| start_idx).collect())
+
     }
 }
