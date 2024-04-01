@@ -467,51 +467,62 @@ impl Xenobalanus {
         }
 
         // Order the hull edge indices to form a continuous path
-        let ordered_indices = self.order_hull_edges(hull_edge_indices)?;
+        let ordered_indices = self.ordered_vertices(hull_edge_indices)?;
 
         Ok(ordered_indices)
     }
 
     /// Attempts to order hull edges into a continuous path.
-    pub fn order_hull_edges(&self, hull_edge_indices: Vec<(usize, usize)>) -> Result<Vec<usize>, &'static str> {
-        if hull_edge_indices.is_empty() {
-            return Err("No edges provided.");
+    fn ordered_vertices(&self, edges: Vec<(usize, usize)>) -> Result<Vec<usize>, &'static str> {
+        let mut graph = HashMap::new();
+        // Create the graph and track degrees
+        for (a, b) in &edges {
+            graph.entry(*a).or_insert_with(HashSet::new).insert(*b);
+            graph.entry(*b).or_insert_with(HashSet::new).insert(*a);
         }
-
-        let mut visited: HashSet<usize> = HashSet::new();
-        let mut ordered_point_indices: Vec<usize> = Vec::new();
-
-        // Initialize with the first edge's indices
-        let (start_idx, mut current_idx) = hull_edge_indices[0];
-        ordered_point_indices.push(start_idx);
-        visited.insert(start_idx);
-
-        while visited.len() < hull_edge_indices.len() + 1 {
-            let mut found_next = false;
-
-            for &(p1_idx, p2_idx) in &hull_edge_indices {
-                if p1_idx == current_idx && !visited.contains(&p2_idx) {
-                    ordered_point_indices.push(p2_idx);
-                    visited.insert(p2_idx);
-                    current_idx = p2_idx;
-                    found_next = true;
-                    break;
-                } else if p2_idx == current_idx && !visited.contains(&p1_idx) {
-                    ordered_point_indices.push(p1_idx);
-                    visited.insert(p1_idx);
-                    current_idx = p1_idx;
-                    found_next = true;
-                    break;
+    
+        // Verify the graph's conditions for an Eulerian path
+        let mut odd_degree_vertices = vec![];
+        for (&vertex, neighbors) in &graph {
+            if neighbors.len() % 2 != 0 {
+                odd_degree_vertices.push(vertex);
+            }
+        }
+        if odd_degree_vertices.len() > 2 {
+            return Err("Graph cannot have more than two vertices of odd degree");
+        }
+    
+        // Choose a start vertex
+        let start = if !odd_degree_vertices.is_empty() {
+            odd_degree_vertices[0]
+        } else {
+            *graph.keys().next().ok_or("Graph is empty")?
+        };
+    
+        let mut stack = vec![start];
+        let mut path = Vec::new(); // This will store the path of vertices
+        let mut visited_edges = HashSet::new(); // To track visited edges
+    
+        while let Some(node) = stack.pop() {
+            path.push(node); // Add vertex to the path
+            if let Some(neighbors) = graph.get_mut(&node) {
+                for &next in neighbors.clone().iter() {
+                    // Ensure each edge is traversed exactly once
+                    if !visited_edges.contains(&(node, next)) && !visited_edges.contains(&(next, node)) {
+                        visited_edges.insert((node, next));
+                        visited_edges.insert((next, node)); // Mark edge as visited in both directions
+                        stack.push(next); // Visit next vertex
+                        break; // Break after pushing one neighbor to ensure we follow one continuous path
+                    }
                 }
             }
-
-            if !found_next {
-                return Err("Failed to order all concave hull vertices into a continuous path.");
-            }
         }
-
-        // Convert indices to Points
-        Ok(hull_edge_indices.iter().map(|&(start_idx, _)| start_idx).collect())
-
+    
+        // Check if all edges were visited
+        if visited_edges.len() / 2 != edges.len() {
+            return Err("Graph is not Eulerian: no path uses all edges exactly once");
+        }
+    
+        Ok(path)
     }
 }
