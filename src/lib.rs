@@ -33,8 +33,13 @@ impl Point {
     pub fn bearing(&self, point: Point) -> f32 {
         let delta_x = point.x - self.x;
         let delta_y = point.y - self.y;
-        delta_y.atan2(delta_x).to_degrees().rem_euclid(360.0)
+        let angle = delta_y.atan2(delta_x).to_degrees();
+    
+        // Convert Cartesian degree to compass bearing
+        let bearing = (angle + 360.0) % 360.0;
+        bearing
     }
+
 }
 
 impl From<Point> for Coord<f32> {
@@ -409,120 +414,5 @@ impl Xenobalanus {
         }
     
         clusters
-    }
-}
-
-impl Xenobalanus {
-
-    pub fn delaunay_sub(&self, vertices: Vec<usize>) -> Vec<usize> {
-        let delaunator_points: Vec<DelaunatorPoint> = vertices.iter()
-        .map(|vertex| DelaunatorPoint { x: self.point(*vertex).x as f64, y: self.point(*vertex).y as f64 })
-        .collect();
-
-        // Perform Delaunay triangulation
-        let result: delaunator::Triangulation = triangulate(&delaunator_points);
-        result.triangles
-
-    }
-
-    /// Calculates the concave hull for a subset of vertices indicated by their indices, based on the alpha parameter.
-    pub fn concave_hull(&self, vertex_indices: &Vec<usize>, alpha: f32) -> Result<Vec<usize>, &'static str> {
-        // Perform Delaunay triangulation on the subset of vertices.
-        let triangulation_indices = self.delaunay_sub(vertex_indices.clone());
-
-        if triangulation_indices.is_empty() {
-            return Err("Delaunay triangulation failed or no triangles were formed.");
-        }
-
-        // Initialize edge counter to identify unique edges
-        let mut edge_counter: HashMap<(usize, usize), usize> = HashMap::new();
-
-        // Iterate through triangles to populate edge counter
-        for chunk in triangulation_indices.chunks(3) {
-            if chunk.len() == 3 {
-                let global_indices = [vertex_indices[chunk[0]], vertex_indices[chunk[1]], vertex_indices[chunk[2]]];
-                
-                // Process each edge in the triangle
-                for i in 0..3 {
-                    let start_idx = global_indices[i];
-                    let end_idx = global_indices[(i + 1) % 3];
-                    let edge = (start_idx.min(end_idx), start_idx.max(end_idx)); // Ensure consistent ordering
-
-                    // Apply alpha filter based on the distance between points
-                    let distance = self.point(start_idx).distance(self.point(end_idx));
-                    if distance < alpha {
-                        *edge_counter.entry(edge).or_insert(0) += 1;
-                    }
-                }
-            }
-        }
-
-        // Extract edges that appear exactly once and are within the alpha radius
-        let hull_edge_indices: Vec<(usize, usize)> = edge_counter.into_iter()
-            .filter_map(|(edge, count)| if count == 1 { Some(edge) } else { None })
-            .collect();
-
-        if hull_edge_indices.is_empty() {
-            return Err("No edges meet the criteria for the concave hull.");
-        }
-
-        // Order the hull edge indices to form a continuous path
-        let ordered_indices = self.ordered_vertices(hull_edge_indices)?;
-
-        Ok(ordered_indices)
-    }
-
-    /// Attempts to order hull edges into a continuous path.
-    fn ordered_vertices(&self, edges: Vec<(usize, usize)>) -> Result<Vec<usize>, &'static str> {
-        let mut graph = HashMap::new();
-        // Create the graph and track degrees
-        for (a, b) in &edges {
-            graph.entry(*a).or_insert_with(HashSet::new).insert(*b);
-            graph.entry(*b).or_insert_with(HashSet::new).insert(*a);
-        }
-    
-        // Verify the graph's conditions for an Eulerian path
-        let mut odd_degree_vertices = vec![];
-        for (&vertex, neighbors) in &graph {
-            if neighbors.len() % 2 != 0 {
-                odd_degree_vertices.push(vertex);
-            }
-        }
-        if odd_degree_vertices.len() > 2 {
-            return Err("Graph cannot have more than two vertices of odd degree");
-        }
-    
-        // Choose a start vertex
-        let start = if !odd_degree_vertices.is_empty() {
-            odd_degree_vertices[0]
-        } else {
-            *graph.keys().next().ok_or("Graph is empty")?
-        };
-    
-        let mut stack = vec![start];
-        let mut path = Vec::new(); // This will store the path of vertices
-        let mut visited_edges = HashSet::new(); // To track visited edges
-    
-        while let Some(node) = stack.pop() {
-            path.push(node); // Add vertex to the path
-            if let Some(neighbors) = graph.get_mut(&node) {
-                for &next in neighbors.clone().iter() {
-                    // Ensure each edge is traversed exactly once
-                    if !visited_edges.contains(&(node, next)) && !visited_edges.contains(&(next, node)) {
-                        visited_edges.insert((node, next));
-                        visited_edges.insert((next, node)); // Mark edge as visited in both directions
-                        stack.push(next); // Visit next vertex
-                        break; // Break after pushing one neighbor to ensure we follow one continuous path
-                    }
-                }
-            }
-        }
-    
-        // Check if all edges were visited
-        if visited_edges.len() / 2 != edges.len() {
-            return Err("Graph is not Eulerian: no path uses all edges exactly once");
-        }
-    
-        Ok(path)
     }
 }
