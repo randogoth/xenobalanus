@@ -426,7 +426,7 @@ impl Xenobalanus {
     }
 
     /// Calculates the concave hull for a subset of vertices indicated by their indices, based on the alpha parameter.
-    pub fn concave_hull(&self, vertex_indices: Vec<usize>, alpha: f32) -> Result<Vec<usize>, &'static str> {
+    pub fn concave_hull(&self, vertex_indices: &Vec<usize>, alpha: f32) -> Result<Vec<usize>, &'static str> {
         // Perform Delaunay triangulation on the subset of vertices.
         let triangulation_indices = self.delaunay_sub(vertex_indices.clone());
 
