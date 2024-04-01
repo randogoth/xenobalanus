@@ -49,7 +49,7 @@ impl From<Point> for Coord<f32> {
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct Edge(usize, usize);
+pub struct Edge(pub usize, pub usize);
 
 #[derive(Debug, Default, Clone)]
 pub struct TriangleData {
