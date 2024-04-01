@@ -414,7 +414,7 @@ impl Xenobalanus {
 
 impl Xenobalanus {
 
-    pub fn delaunay_sub(&mut self, vertices: Vec<usize>) -> Vec<usize> {
+    pub fn delaunay_sub(&self, vertices: Vec<usize>) -> Vec<usize> {
         let delaunator_points: Vec<DelaunatorPoint> = vertices.iter()
         .map(|vertex| DelaunatorPoint { x: self.point(*vertex).x as f64, y: self.point(*vertex).y as f64 })
         .collect();
@@ -426,7 +426,7 @@ impl Xenobalanus {
     }
 
     /// Calculates the concave hull for a subset of vertices indicated by their indices, based on the alpha parameter.
-    pub fn concave_hull(&mut self, vertex_indices: Vec<usize>, alpha: f32) -> Result<Vec<Point>, &'static str> {
+    pub fn concave_hull(&self, vertex_indices: Vec<usize>, alpha: f32) -> Result<Vec<usize>, &'static str> {
         // Perform Delaunay triangulation on the subset of vertices.
         let triangulation_indices = self.delaunay_sub(vertex_indices.clone());
 
@@ -469,10 +469,7 @@ impl Xenobalanus {
         // Order the hull edge indices to form a continuous path
         let ordered_indices = self.order_hull_edges(hull_edge_indices)?;
 
-        // Convert ordered indices to points
-        let ordered_points = ordered_indices.iter().map(|&idx| self.point(idx)).collect();
-
-        Ok(ordered_points)
+        Ok(ordered_indices)
     }
 
     /// Attempts to order hull edges into a continuous path.
