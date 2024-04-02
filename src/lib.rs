@@ -83,6 +83,7 @@ pub struct GeometryData {
     pub edge_to_triangles: HashMap<Edge, Vec<usize>>, // Maps an edge to triangle indices
     pub edge_lengths: HashMap<Edge, f32>, // Edge lengths
     pub vertex_connections: HashMap<usize, HashSet<usize>>, // Direct connections between vertices, for DTSCAN
+    pub triangle_blacklist: HashSet<usize>, // invalidated triangles
 }
 
 impl GeometryData {
@@ -91,7 +92,8 @@ impl GeometryData {
             triangles: Vec::new(),
             edge_to_triangles: HashMap::new(),
             edge_lengths: HashMap::new(),
-            vertex_connections: HashMap::new(), // Adjusted for DTSCAN
+            vertex_connections: HashMap::new(),
+            triangle_blacklist: HashSet::new(),
         }
     }
     fn add_triangle(&mut self, index: usize, points: &[Point], tri_idx: &[usize], types: usize) {
@@ -159,6 +161,10 @@ impl GeometryData {
             };
         }
     } 
+
+    pub fn remove_triangle(&mut self, triangle_index: usize) {
+        self.triangle_blacklist.insert(triangle_index);
+    }
           
 }
 
@@ -197,26 +203,53 @@ impl Xenobalanus {
         self.points = points
     }
 
-    pub fn triangle(&self, index: usize) -> TriangleData {
-        self.geometry_data.triangles[index].clone()
+    pub fn triangle(&self, index: usize) -> Option<&TriangleData> {
+        if !self.geometry_data.triangle_blacklist.contains(&index) {
+            Some(&self.geometry_data.triangles[index])
+        } else {
+            None
+        }
     }
 
-    pub fn triangle_data(&self) -> &Vec<TriangleData> {
-        &self.geometry_data.triangles
+    pub fn triangle_data(&self) -> Vec<TriangleData> {
+        self.geometry_data.triangles.iter()
+            .enumerate()
+            .filter_map(|(index, triangle)| {
+                if self.geometry_data.triangle_blacklist.contains(&index) {
+                    None // Skip blacklisted triangles
+                } else {
+                    Some(triangle.clone()) // Include this triangle
+                }
+            })
+            .collect()
+    }
+
+    pub fn triangle_area(&self, index: usize) -> f32 {
+        self.triangle(index).map_or(0.0, |tri| tri.area.unwrap_or_default())
     }
 
     pub fn triangles_flat(&self) -> Vec<usize> {
-        self.triangulation.clone()
+        let mut filtered_vertices = Vec::new();
+        for (i, chunk) in self.triangulation.chunks(3).enumerate() {
+            // Skip this triangle if it's blacklisted
+            if self.geometry_data.triangle_blacklist.contains(&i) {
+                continue;
+            }
+            filtered_vertices.extend_from_slice(chunk);
+        }
+        filtered_vertices
     }
 
     pub fn triangle_vertices(&self) -> Vec<Vec<usize>> {
-        self.triangulation.chunks(3).map(|chunk| {
+        let triangulation = self.triangles_flat();
+        triangulation.chunks(3).map(|chunk| {
             chunk.iter().map(|&index| index).collect()
         }).collect()
     }
 
     pub fn triangle_coordinates(&self) -> Vec<Vec<(f32, f32)>> {
-        self.triangulation.chunks(3).map(|chunk| {
+        let triangulation = self.triangles_flat();
+        triangulation.chunks(3).map(|chunk| {
             chunk.iter().map(|&index| {
                 let point = &self.points[index];
                 (point.x, point.y) // Each point is represented by a Vec<f32> of its coordinates
@@ -226,6 +259,45 @@ impl Xenobalanus {
 
     pub fn set_triangles(&mut self, vertices: Vec<usize>) {
         self.triangulation = vertices
+    }
+
+    /// Helper function to calculate the sign of an area defined by three points.
+    fn sign(p1: &Point, p2: &Point, p3: &Point) -> f32 {
+        (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y)
+    }
+
+    /// Determines if a point is inside a triangle.
+    fn point_in_triangle(pt: &Point, v1: &Point, v2: &Point, v3: &Point) -> bool {
+        let d1 = Self::sign(pt, v1, v2);
+        let d2 = Self::sign(pt, v2, v3);
+        let d3 = Self::sign(pt, v3, v1);
+
+        let has_neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
+        let has_pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
+
+        !(has_neg && has_pos) // True if the point is inside the triangle
+    }
+
+    /// Finds the triangle that contains the given point.
+    pub fn find_containing_triangle(&self, new_point: &Point) -> Option<usize> {
+        for (index, triangle) in self.geometry_data.triangles.iter().enumerate() {
+            // Skip if the triangle is blacklisted
+            if self.geometry_data.triangle_blacklist.contains(&index) {
+                continue;
+            }
+
+            // Retrieve the vertices of the triangle
+            let v1 = &self.points[triangle.vertices[0]];
+            let v2 = &self.points[triangle.vertices[1]];
+            let v3 = &self.points[triangle.vertices[2]];
+
+            // Check if the new_point is inside the current triangle
+            if Self::point_in_triangle(new_point, v1, v2, v3) {
+                return Some(index); // Return the index of the containing triangle
+            }
+        }
+
+        None // Return None if no containing triangle is found
     }
 
     // Additional methods moved into GeometryProcessor, operating on self.geometry_data
@@ -247,15 +319,19 @@ impl Xenobalanus {
         &self.geometry_data.edge_lengths
     }
 
-    pub fn delaunay(&mut self) {
-        // Convert geo::Point to delaunator::Point for triangulation
-        let delaunator_points: Vec<DelaunatorPoint> = self.points.iter()
+    fn triangulate(&self, points: &Vec<Point>) -> Vec<usize> {
+        
+        let delaunator_points: Vec<DelaunatorPoint> = points.iter()
         .map(|point: &Point| DelaunatorPoint { x: point.x as f64, y: point.y as f64 })
         .collect();
 
     // Perform Delaunay triangulation
     let result: delaunator::Triangulation = triangulate(&delaunator_points);
-    self.triangulation = result.triangles
+    result.triangles
+    }
+
+    pub fn delaunay(&mut self) {
+        self.triangulation = self.triangulate(&self.points);
     }
 
     pub fn preprocess(&mut self, types: usize) {
@@ -281,7 +357,7 @@ impl Xenobalanus {
         let mut processed_triangles: HashSet<usize> = HashSet::new();
     
         // Create a sorted list of triangles by their terminal edge length that meet the minimum distance criteria.
-        let mut triangles_sorted: Vec<(usize, f32)> = self.geometry_data.triangles.iter()
+        let mut triangles_sorted: Vec<(usize, f32)> = self.triangle_data().iter()
             .filter_map(|t| t.terminal_edge.and_then(|e| self.geometry_data.edge_lengths.get(&e).map(|&l| (t.index, l))))
             .filter(|&(_, length)| length >= min_distance)
             .collect();
@@ -305,7 +381,7 @@ impl Xenobalanus {
             processed_triangles.insert(triangle_index);
 
             // Get all edges of the current triangle
-            if let Some(edges) = self.geometry_data.triangles.get(triangle_index).map(|t| t.get_edges()) {
+            if let Some(edges) = self.triangle(triangle_index).map(|t| t.get_edges()) {
                 for edge in edges {
                     
                     // Add all edges to check for neighbors to expand
@@ -328,8 +404,13 @@ impl Xenobalanus {
                             continue;
                         }
 
+                        // Skip if triangle is blacklisted
+                        if self.geometry_data.triangle_blacklist.contains(&neighbor_index) {
+                            continue;
+                        }
+
                         // Get neighbor triangle
-                        if let Some(neighbor_triangle) = self.geometry_data.triangles.get(neighbor_index) {
+                        if let Some(neighbor_triangle) = self.triangle(neighbor_index) {
                             
                             // Get neighbor triangle's terminal edge
                             if let Some(neighbor_edge) = neighbor_triangle.terminal_edge {
@@ -358,7 +439,7 @@ impl Xenobalanus {
         // Retain only those sets that meet the minimum area criteria
         void_polygons.retain(|set| {
             set.iter()
-               .filter_map(|&i| self.geometry_data.triangles[i].area)
+               .filter_map(|&i| Some(self.triangle_area(i)))
                .sum::<f32>() >= min_area
         });
     
