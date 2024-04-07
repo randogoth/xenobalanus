@@ -58,7 +58,7 @@ impl Xenobalanus {
         self.tetrahedrons.insert_vertices(&vertices, true).unwrap_or_default();
     }
 
-    pub fn add_tetrahedron_inf(&mut self, vertex1: usize, vertex2: usize, vertex3: usize) {
+    pub fn add_triangle(&mut self, vertex1: usize, vertex2: usize, vertex3: usize) {
 
         let p1 = self.tetrahedrons.get_vertices()[vertex1];
         let p2 = self.tetrahedrons.get_vertices()[vertex2];
@@ -72,18 +72,20 @@ impl Xenobalanus {
         let l23 = n2.distance(&n3);
         let l31 = n3.distance(&n1);
 
-        let edge1 = Edge(min(vertex1, vertex2), max(vertex1, vertex2));
-        let edge2 = Edge(min(vertex2, vertex3), max(vertex2, vertex3));
-        let edge3 = Edge(min(vertex3, vertex1), max(vertex3, vertex1));
+        let edge12 = Edge(min(vertex1, vertex2), max(vertex1, vertex2));
+        let edge23 = Edge(min(vertex2, vertex3), max(vertex2, vertex3));
+        let edge31 = Edge(min(vertex3, vertex1), max(vertex3, vertex1));
 
-        self.geometry_data.edge_lengths.insert(edge1, l12);
-        self.geometry_data.edge_lengths.insert(edge2, l23);
-        self.geometry_data.edge_lengths.insert(edge3, l31);
+        self.geometry_data.edge_lengths.insert(edge12, l12);
+        self.geometry_data.edge_lengths.insert(edge23, l23);
+        self.geometry_data.edge_lengths.insert(edge31, l31);
 
         self.geometry_data.vertex_connections.entry(vertex1).or_insert_with(HashSet::new).insert(vertex2);
         self.geometry_data.vertex_connections.entry(vertex2).or_insert_with(HashSet::new).insert(vertex1);
+        
         self.geometry_data.vertex_connections.entry(vertex2).or_insert_with(HashSet::new).insert(vertex3);
         self.geometry_data.vertex_connections.entry(vertex3).or_insert_with(HashSet::new).insert(vertex2);
+        
         self.geometry_data.vertex_connections.entry(vertex3).or_insert_with(HashSet::new).insert(vertex1);
         self.geometry_data.vertex_connections.entry(vertex1).or_insert_with(HashSet::new).insert(vertex3);
 
@@ -103,27 +105,42 @@ impl Xenobalanus {
 
         let l12 = &n1.distance(&n2);
         let l23 = &n2.distance(&n3);
-        let l34 = &n3.distance(&n4);
+        let l31 = &n3.distance(&n1);
         let l41 = &n4.distance(&n1);
+        let l42 = &n4.distance(&n2);
+        let l43 = &n4.distance(&n3);
 
-        let edge1 = Edge(min(vertex1, vertex2), max(vertex1, vertex2));
-        let edge2 = Edge(min(vertex2, vertex3), max(vertex2, vertex3));
-        let edge3 = Edge(min(vertex3, vertex4), max(vertex3, vertex4));
-        let edge4 = Edge(min(vertex4, vertex1), max(vertex4, vertex1));
+        let edge12 = Edge(min(vertex1, vertex2), max(vertex1, vertex2));
+        let edge23 = Edge(min(vertex2, vertex3), max(vertex2, vertex3));
+        let edge31 = Edge(min(vertex3, vertex1), max(vertex3, vertex1));
+        let edge41 = Edge(min(vertex4, vertex1), max(vertex4, vertex1));
+        let edge42 = Edge(min(vertex4, vertex2), max(vertex4, vertex2));
+        let edge43 = Edge(min(vertex4, vertex3), max(vertex4, vertex3));
 
-        self.geometry_data.edge_lengths.insert(edge1, *l12);
-        self.geometry_data.edge_lengths.insert(edge2, *l23);
-        self.geometry_data.edge_lengths.insert(edge3, *l34);
-        self.geometry_data.edge_lengths.insert(edge4, *l41);
+        self.geometry_data.edge_lengths.insert(edge12, *l12);
+        self.geometry_data.edge_lengths.insert(edge23, *l23);
+        self.geometry_data.edge_lengths.insert(edge31, *l31);
+        self.geometry_data.edge_lengths.insert(edge41, *l41);
+        self.geometry_data.edge_lengths.insert(edge42, *l42);
+        self.geometry_data.edge_lengths.insert(edge43, *l43);
 
         self.geometry_data.vertex_connections.entry(vertex1).or_insert_with(HashSet::new).insert(vertex2);
         self.geometry_data.vertex_connections.entry(vertex2).or_insert_with(HashSet::new).insert(vertex1);
+        
         self.geometry_data.vertex_connections.entry(vertex2).or_insert_with(HashSet::new).insert(vertex3);
         self.geometry_data.vertex_connections.entry(vertex3).or_insert_with(HashSet::new).insert(vertex2);
-        self.geometry_data.vertex_connections.entry(vertex3).or_insert_with(HashSet::new).insert(vertex4);
-        self.geometry_data.vertex_connections.entry(vertex4).or_insert_with(HashSet::new).insert(vertex3);
+        
+        self.geometry_data.vertex_connections.entry(vertex3).or_insert_with(HashSet::new).insert(vertex1);
+        self.geometry_data.vertex_connections.entry(vertex1).or_insert_with(HashSet::new).insert(vertex3);
+        
         self.geometry_data.vertex_connections.entry(vertex4).or_insert_with(HashSet::new).insert(vertex1);
         self.geometry_data.vertex_connections.entry(vertex1).or_insert_with(HashSet::new).insert(vertex4);
+        
+        self.geometry_data.vertex_connections.entry(vertex4).or_insert_with(HashSet::new).insert(vertex2);
+        self.geometry_data.vertex_connections.entry(vertex2).or_insert_with(HashSet::new).insert(vertex4);
+        
+        self.geometry_data.vertex_connections.entry(vertex4).or_insert_with(HashSet::new).insert(vertex3);
+        self.geometry_data.vertex_connections.entry(vertex3).or_insert_with(HashSet::new).insert(vertex4);
 
     }
 
@@ -143,16 +160,16 @@ impl Xenobalanus {
             let [node1, node2, node3, node4] = tetrahedron;
             match (node1, node2, node3, node4) {
                 (Node::Infinity, Node::Value(ind_v2), Node::Value(ind_v3), Node::Value(ind_v4)) => {
-                    self.add_tetrahedron_inf(ind_v2, ind_v3, ind_v4);
+                    self.add_triangle(ind_v2, ind_v3, ind_v4);
                 },
                 (Node::Value(ind_v1), Node::Infinity, Node::Value(ind_v3), Node::Value(ind_v4)) => {
-                    self.add_tetrahedron_inf(ind_v3, ind_v4, ind_v1);
+                    self.add_triangle(ind_v3, ind_v4, ind_v1);
                 },
                 (Node::Value(ind_v1), Node::Value(ind_v2), Node::Infinity, Node::Value(ind_v4)) => {
-                    self.add_tetrahedron_inf(ind_v4, ind_v1, ind_v2);
+                    self.add_triangle(ind_v4, ind_v1, ind_v2);
                 },
                 (Node::Value(ind_v1), Node::Value(ind_v2), Node::Value(ind_v3), Node::Infinity) => {
-                    self.add_tetrahedron_inf(ind_v1, ind_v2, ind_v3);
+                    self.add_triangle(ind_v1, ind_v2, ind_v3);
                 },
                 (Node::Value(ind_v1), Node::Value(ind_v2), Node::Value(ind_v3), Node::Value(ind_v4)) => {
                     self.add_tetrahedron(ind_v1, ind_v2, ind_v3, ind_v4);
