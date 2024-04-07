@@ -1,8 +1,10 @@
 use delaunator::{triangulate, Point as DelaunatorPoint};
 use geo::{Point as GeoPoint, Coord};
 use rand::Rng;
+use rayon::prelude::*;
 use std::cmp::{min, max};
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Point {
@@ -213,33 +215,6 @@ impl Xenobalanus {
         }).collect()
     }
 
-    pub fn triangle_edges(&self) -> Vec<(usize, usize)> {
-        let triangles = self.triangle_vertices();
-        let mut edges_set = HashSet::new();
-
-        for triangle in triangles {
-            // Generate edges from the triangle vertices
-            let edges = vec![
-                (triangle[0], triangle[1]),
-                (triangle[1], triangle[2]),
-                (triangle[2], triangle[0]),
-            ];
-
-            for mut edge in edges {
-                // Normalize the edge to ensure consistency in representation
-                if edge.0 > edge.1 {
-                    edge = (edge.1, edge.0);
-                }
-
-                // Insert into the HashSet to ensure uniqueness
-                edges_set.insert(edge);
-            }
-        }
-
-        // Convert the HashSet back into a Vec and return
-        edges_set.into_iter().collect()
-    }
-
     pub fn triangle_coordinates(&self) -> Vec<Vec<(f32, f32)>> {
         self.triangulation.chunks(3).map(|chunk| {
             chunk.iter().map(|&index| {
@@ -284,19 +259,17 @@ impl Xenobalanus {
     }
 
     pub fn preprocess(&mut self, types: usize) {
-        // let geometry_data = Arc::new(Mutex::new(GeometryData::new()));
-        // self.triangulation.par_chunks(3).enumerate().for_each(|(index, tri_idx)| {
-        //     let gd = geometry_data.clone(); // Clone Arc for use in each thread, not the data itself
+        let geometry_data = Arc::new(Mutex::new(GeometryData::new()));
     
-        //     // Perform locked update
-        //     let mut gd_lock = gd.lock().unwrap();
-        //     gd_lock.add_triangle(index, &self.points, tri_idx, types);
-        // });
+        self.triangulation.par_chunks(3).enumerate().for_each(|(index, tri_idx)| {
+            let gd = geometry_data.clone(); // Clone Arc for use in each thread, not the data itself
     
-        // self.geometry_data = Arc::try_unwrap(geometry_data).unwrap().into_inner().unwrap();
-        self.triangulation.chunks(3).enumerate().for_each(|(index, tri_idx)| {    
-            self.geometry_data.add_triangle(index, &self.points, tri_idx, types);
+            // Perform locked update
+            let mut gd_lock = gd.lock().unwrap();
+            gd_lock.add_triangle(index, &self.points, tri_idx, types);
         });
+    
+        self.geometry_data = Arc::try_unwrap(geometry_data).unwrap().into_inner().unwrap();
     }
 
     pub fn delfin(
