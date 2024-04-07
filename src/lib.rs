@@ -6,6 +6,10 @@ use std::cmp::{min, max};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
+#[cfg(feature = "three-d")]
+use simple_delaunay_lib::delaunay_3d::delaunay_struct_3d::DelaunayStructure3D;
+mod threedee;
+
 #[derive(Debug, Clone, Copy)]
 pub struct Point {
     pub x: f32,
@@ -166,6 +170,9 @@ pub struct Xenobalanus {
     geometry_data: GeometryData,
     points: Vec<Point>,
     triangulation: Vec<usize>,
+    #[cfg(feature = "three-d")]
+    nodes: Vec<crate::threedee::Point3D>,
+    tetrahedrons: DelaunayStructure3D,
 }
 
 impl Xenobalanus {
@@ -174,6 +181,9 @@ impl Xenobalanus {
             geometry_data: GeometryData::new(),
             points: Vec::new(),
             triangulation: Vec::new(),
+            #[cfg(feature = "three-d")]
+            nodes: Vec::new(),
+            tetrahedrons: DelaunayStructure3D::new(),
         }
     }
 
