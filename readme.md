@@ -44,7 +44,9 @@ fn main() {
     println!("Generated Delaunay triangulation");
 
     // Pre-process triangles
-    xeno.preprocess(0);
+    // 1 - attractors, 2 - voids, 0 - both
+    // true/false - parallel processing
+    xeno.preprocess(0, false);
 
     // Execute delfin function with the generated GeometryData
     let min_area: f32 = 1000.0; // threshold for voidness

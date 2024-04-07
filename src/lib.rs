@@ -258,18 +258,27 @@ impl Xenobalanus {
     self.triangulation = result.triangles
     }
 
-    pub fn preprocess(&mut self, types: usize) {
-        let geometry_data = Arc::new(Mutex::new(GeometryData::new()));
-    
-        self.triangulation.par_chunks(3).enumerate().for_each(|(index, tri_idx)| {
-            let gd = geometry_data.clone(); // Clone Arc for use in each thread, not the data itself
-    
-            // Perform locked update
-            let mut gd_lock = gd.lock().unwrap();
-            gd_lock.add_triangle(index, &self.points, tri_idx, types);
-        });
-    
-        self.geometry_data = Arc::try_unwrap(geometry_data).unwrap().into_inner().unwrap();
+    pub fn preprocess(&mut self, types: usize, parallel: bool) {
+        if parallel {
+
+            let geometry_data = Arc::new(Mutex::new(GeometryData::new()));
+        
+            self.triangulation.par_chunks(3).enumerate().for_each(|(index, tri_idx)| {
+                let gd = geometry_data.clone(); // Clone Arc for use in each thread, not the data itself
+        
+                // Perform locked update
+                let mut gd_lock = gd.lock().unwrap();
+                gd_lock.add_triangle(index, &self.points, tri_idx, types);
+            });
+        
+            self.geometry_data = Arc::try_unwrap(geometry_data).unwrap().into_inner().unwrap();
+        } else {
+
+            self.triangulation.chunks(3).enumerate().for_each(|(index, tri_idx)| {
+                self.geometry_data.add_triangle(index, &self.points, tri_idx, types);
+            });
+
+        }
     }
 
     pub fn delfin(
