@@ -1,10 +1,12 @@
 use rand::Rng;
+use simple_delaunay_lib::delaunay_3d::delaunay_struct_3d::ExtendedTetrahedron;
 use simple_delaunay_lib::delaunay_3d::simplicial_struct_3d::Node;
 use std::cmp::{min, max};
 use std::collections::HashSet;
 
 use super::{Edge, Xenobalanus};
 
+#[derive(Debug, Clone, Copy)]
 pub struct Point3D {
     x: f32,
     y: f32,
@@ -32,6 +34,74 @@ impl Point3D {
 
 impl Xenobalanus {
 
+    pub fn point_3d(&self, index: usize) -> Point3D {
+        self.nodes[index]
+    }
+
+    pub fn points_3d(&self) -> Vec<(f32, f32, f32)> {
+        self.nodes.iter()
+            .map(|point| (point.x, point.y, point.z))
+            .collect()
+    }
+
+    pub fn tetrahedra(&self) -> Vec<[[f32; 3]; 2]> {
+        let total = self.tetrahedra.get_simplicial().get_nb_tetrahedra();
+        let mut edges: Vec<[[f32; 3]; 2]> = vec![];
+        for idx in 0..total {
+            match self.tetrahedra.get_extended_tetrahedron(idx) {
+                Ok(tet) => {
+                    match tet {
+                        ExtendedTetrahedron::Tetrahedron(te) => {
+                            edges.push([
+                                [te[0][0] as f32, te[0][1] as f32, te[0][2] as f32],
+                                [te[1][0] as f32, te[1][1] as f32, te[1][2] as f32]
+                                ]);
+                            edges.push([
+                                [te[1][0] as f32, te[1][1] as f32, te[1][2] as f32],
+                                [te[2][0] as f32, te[2][1] as f32, te[2][2] as f32]
+                                ]);
+                            edges.push([
+                                [te[2][0] as f32, te[2][1] as f32, te[2][2] as f32],
+                                [te[0][0] as f32, te[0][1] as f32, te[0][2] as f32]
+                                ]);
+                            edges.push([
+                                [te[3][0] as f32, te[3][1] as f32, te[3][2] as f32],
+                                [te[0][0] as f32, te[0][1] as f32, te[0][2] as f32]
+                                ]);
+                            edges.push([
+                                [te[3][0] as f32, te[3][1] as f32, te[3][2] as f32],
+                                [te[1][0] as f32, te[1][1] as f32, te[1][2] as f32]
+                                ]);
+                            edges.push([
+                                [te[3][0] as f32, te[3][1] as f32, te[3][2] as f32],
+                                [te[2][0] as f32, te[2][1] as f32, te[2][2] as f32]
+                                ]);
+                        },
+                        ExtendedTetrahedron::Triangle(te) => {
+                            edges.push([
+                                [te[0][0] as f32, te[0][1] as f32, te[0][2] as f32],
+                                [te[1][0] as f32, te[1][1] as f32, te[1][2] as f32]
+                                ]);
+                            edges.push([
+                                [te[1][0] as f32, te[1][1] as f32, te[1][2] as f32],
+                                [te[2][0] as f32, te[2][1] as f32, te[2][2] as f32]
+                                ]);
+                            edges.push([
+                                [te[2][0] as f32, te[2][1] as f32, te[2][2] as f32],
+                                [te[0][0] as f32, te[0][1] as f32, te[0][2] as f32]
+                                ]);
+                        }
+                    }
+                },
+                Err(_) => {
+                    println!("Error getting tetrahedron at index {}", idx);
+                    continue;
+                }
+            }
+        }
+        edges
+    }
+
     pub fn random_points_3d(&mut self, center: (f32, f32), side_length: f32, num_points: u32) {
         
         // generate random points in a cube
@@ -55,14 +125,14 @@ impl Xenobalanus {
         let vertices: Vec<[f64; 3]> = self.nodes.iter().map(|node| {
             node.arr()
         }).collect();
-        self.tetrahedrons.insert_vertices(&vertices, true).unwrap_or_default();
+        self.tetrahedra.insert_vertices(&vertices, true).unwrap_or_default();
     }
 
     pub fn add_triangle(&mut self, vertex1: usize, vertex2: usize, vertex3: usize) {
 
-        let p1 = self.tetrahedrons.get_vertices()[vertex1];
-        let p2 = self.tetrahedrons.get_vertices()[vertex2];
-        let p3 = self.tetrahedrons.get_vertices()[vertex3];
+        let p1 = self.tetrahedra.get_vertices()[vertex1];
+        let p2 = self.tetrahedra.get_vertices()[vertex2];
+        let p3 = self.tetrahedra.get_vertices()[vertex3];
 
         let n1 = Point3D::new((p1[0] as f32, p1[1] as f32, p1[2] as f32));
         let n2 = Point3D::new((p2[0] as f32, p2[1] as f32, p2[2] as f32));
@@ -93,10 +163,10 @@ impl Xenobalanus {
 
     pub fn add_tetrahedron(&mut self, vertex1: usize, vertex2: usize, vertex3: usize, vertex4: usize) {
 
-        let p1 = self.tetrahedrons.get_vertices()[vertex1];
-        let p2 = self.tetrahedrons.get_vertices()[vertex2];
-        let p3 = self.tetrahedrons.get_vertices()[vertex3];
-        let p4 = self.tetrahedrons.get_vertices()[vertex4];
+        let p1 = self.tetrahedra.get_vertices()[vertex1];
+        let p2 = self.tetrahedra.get_vertices()[vertex2];
+        let p3 = self.tetrahedra.get_vertices()[vertex3];
+        let p4 = self.tetrahedra.get_vertices()[vertex4];
 
         let n1 = Point3D::new((p1[0] as f32, p1[1] as f32, p1[2] as f32));
         let n2 = Point3D::new((p2[0] as f32, p2[1] as f32, p2[2] as f32));
@@ -145,11 +215,11 @@ impl Xenobalanus {
     }
 
     pub fn preprocess_3d(&mut self) {
-        let structure = self.tetrahedrons.get_simplicial();
+        let structure = self.tetrahedra.get_simplicial();
         let num_tetras = structure.get_nb_tetrahedra();
     
         for tetra_idx in 0..num_tetras {
-            let tetrahedron = match self.tetrahedrons.get_simplicial().get_tetrahedron(tetra_idx) {
+            let tetrahedron = match self.tetrahedra.get_simplicial().get_tetrahedron(tetra_idx) {
                 Ok(tetra) => tetra.nodes(),
                 Err(_) => {
                     println!("Error getting tetrahedron at index {}", tetra_idx);

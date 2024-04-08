@@ -172,7 +172,7 @@ pub struct Xenobalanus {
     triangulation: Vec<usize>,
     #[cfg(feature = "three-d")]
     nodes: Vec<crate::threedee::Point3D>,
-    tetrahedrons: DelaunayStructure3D,
+    tetrahedra: DelaunayStructure3D,
 }
 
 impl Xenobalanus {
@@ -183,7 +183,7 @@ impl Xenobalanus {
             triangulation: Vec::new(),
             #[cfg(feature = "three-d")]
             nodes: Vec::new(),
-            tetrahedrons: DelaunayStructure3D::new(),
+            tetrahedra: DelaunayStructure3D::new(),
         }
     }
 
