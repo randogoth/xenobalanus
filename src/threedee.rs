@@ -102,15 +102,15 @@ impl Xenobalanus {
         edges
     }
 
-    pub fn random_points_3d(&mut self, center: (f32, f32), side_length: f32, num_points: u32) {
+    pub fn random_points_3d(&mut self, center: (f32, f32, f32), side_length: f32, num_points: u32) {
         
         // generate random points in a cube
         let min_x = center.0 - side_length / 2.0;
         let max_x = center.0 + side_length / 2.0;
         let min_y = center.1 - side_length / 2.0;
         let max_y = center.1 + side_length / 2.0;
-        let min_z = center.0 - side_length / 2.0;
-        let max_z = center.0 + side_length / 2.0;
+        let min_z = center.2 - side_length / 2.0;
+        let max_z = center.2 + side_length / 2.0;
         let mut rng: rand::prelude::ThreadRng = rand::thread_rng();
         for _ in 0..num_points {
             let x = min_x + rng.gen_range(0.0..=1.0) as f32 * ( max_x - min_x);
