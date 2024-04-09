@@ -8,9 +8,9 @@ use super::{Edge, Xenobalanus};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Point3D {
-    x: f32,
-    y: f32,
-    z: f32,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
 }
 
 impl Point3D {
