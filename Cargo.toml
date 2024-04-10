@@ -2,6 +2,13 @@
 name = "xenobalanus"
 version = "0.1.4"
 edition = "2021"
+authors = ["Tobias Raayoni Last  <tobias@randonauts.com>"]
+repository = "https://github.com/randogoth/xenobalanus"
+readme = "readme.md"
+license = "MIT"
+license-file = "LICENSE"
+keywords = ["dtscan", "dbscan", "delfin", "cluster", "void", "delaunay", "astronomy", "attractor"]
+categories = ["algorithms", "science", "mathematics"]
 
 [lib]
 name = "xenobalanus"
