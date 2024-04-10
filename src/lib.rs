@@ -44,6 +44,12 @@ impl Point {
         bearing
     }
 
+    pub fn bearing_rad(&self, point: Point) -> f32 {
+        let delta_x = point.x - self.x;
+        let delta_y = point.y - self.y;
+        delta_y.atan2(delta_x)
+    }
+
 }
 
 impl From<Point> for Coord<f32> {
